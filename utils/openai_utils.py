@@ -69,7 +69,7 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
     
     # Prepare the prompt for the AI
     prompt = f"""Create a concise, professional bio based on the following teacher information.
-    The bio should be 1-2 sentences highlighting their experience and expertise.
+    The bio should be highlighting their experience and expertise.
     
     IMPORTANT RULES:
     - NEVER mention any names (teacher's name, school names, or organization names)
@@ -101,6 +101,115 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
     except Exception as e:
         print(f"Error generating bio: {str(e)}")
         return "Professional educator with teaching experience."
+    finally:
+        # Add a small delay to avoid rate limiting
+        time.sleep(0.5)
+
+def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
+    """
+    Infers the most likely curriculum experience based on teacher information.
+    First tries to match against known Dubai schools, then falls back to AI inference.
+    
+    Args:
+        teacher_data (dict): Dictionary containing teacher information
+        
+    Returns:
+        str: Inferred curriculum (British, American, IB, Indian, UAE, or 'Not specified')
+    """
+    from utils.school_utils import load_dubai_schools, get_curriculum_from_school
+    
+    # Only use school matching for specific fields that are likely to contain school names
+    school_fields = ['current_school', 'previous_school', 'education', 'experience', 'headline']
+    schools_data = load_dubai_schools()
+    
+    # Check specific fields that are likely to contain school names
+    for field in school_fields:
+        if field not in teacher_data or not teacher_data[field] or not isinstance(teacher_data[field], str):
+            continue
+            
+        value = teacher_data[field]
+        if len(value) < 5:  # Skip very short values
+            continue
+            
+        # Check if this field contains a known school
+        matched_school, curriculum = get_curriculum_from_school(value, schools_data)
+        if curriculum and matched_school:
+            # Only use the match if we're very confident
+            clean_value = ' '.join([w for w in value.lower().split() if len(w) > 3])
+            clean_school = ' '.join([w for w in matched_school.lower().split() if len(w) > 3])
+            
+            # If the school name is clearly mentioned in the field
+            if clean_school in clean_value or clean_value in clean_school:
+                print(f"Confident school match: {matched_school} -> {curriculum}")
+                # Map curriculum to our standard format
+                curriculum = curriculum.strip()
+                if 'british' in curriculum.lower() or 'uk' in curriculum.lower():
+                    return "British"
+                elif 'american' in curriculum.lower() or 'us' in curriculum.lower() or 'u.s.' in curriculum.lower():
+                    return "American"
+                elif 'ib' in curriculum.upper() or 'international baccalaureate' in curriculum.lower():
+                    return "IB"
+                elif 'indian' in curriculum.lower() or 'cbse' in curriculum.lower() or 'icse' in curriculum.lower():
+                    return "Indian"
+                elif 'uae' in curriculum.upper() or 'u.a.e' in curriculum.upper() or 'ministry of education' in curriculum.lower():
+                    return "UAE"
+                elif 'french' in curriculum.lower():
+                    return "French"
+                elif 'australian' in curriculum.lower():
+                    return "Australian"
+    
+    # If no confident school match found, use AI inference
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+    
+    # Prepare the prompt for the AI with more specific instructions
+    prompt = f"""Analyze the following teacher information and determine the most likely curriculum they have experience with.
+    
+    IMPORTANT: Only respond with ONE of the exact options below, nothing else.
+    
+    CURRICULUM OPTIONS (MUST USE EXACTLY THESE):
+    - British (for UK/England/Scotland curriculum)
+    - American (for US curriculum, including Common Core)
+    - IB (for International Baccalaureate)
+    - Indian (for CBSE, ICSE, or other Indian boards)
+    - UAE (for UAE national curriculum)
+    - French (for French curriculum)
+    - Australian (for Australian curriculum)
+    - Not specified (only if you cannot determine from the information)
+    
+    CONSIDER THESE FACTORS:
+    1. Nationality and education background
+    2. Work experience at specific schools
+    3. Subjects and grade levels taught
+    4. Any curriculum-specific terminology
+    
+    If the information is unclear or mixed, choose the most likely single option.
+    Only use "Not specified" if there's truly no indication of curriculum experience.
+    
+    Teacher Information:
+    {teacher_data}
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": "You are an expert in international education systems. Your task is to determine the most likely curriculum a teacher has experience with based on their background and experience."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=20,
+            temperature=0.1  # Keep it low for more deterministic responses
+        )
+        
+        curriculum = response.choices[0].message.content.strip()
+        
+        # Validate the response is one of our allowed options
+        valid_curricula = ["British", "American", "IB", "Indian", "UAE", "French", "Australian", "Not specified"]
+        return curriculum if curriculum in valid_curricula else "Not specified"
+        
+    except Exception as e:
+        print(f"Error inferring curriculum: {str(e)}")
+        return "Not specified"
     finally:
         # Add a small delay to avoid rate limiting
         time.sleep(0.5)

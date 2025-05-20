@@ -7,6 +7,7 @@ from transformations.add_headline_column import transform as add_headline_column
 from transformations.add_teacher_bio import transform as add_teacher_bio
 from transformations.add_empty_columns import transform as add_empty_columns
 from transformations.add_curriculum_experience import transform as add_curriculum_experience
+from transformations.calculate_teaching_experience_ai import transform as calculate_teaching_experience
 
 def load_transformations():
     """
@@ -20,6 +21,7 @@ def load_transformations():
         add_teacher_bio,
         add_empty_columns,
         add_curriculum_experience,
+        calculate_teaching_experience,
         # Add more transformation functions here as we create them
     ]
 

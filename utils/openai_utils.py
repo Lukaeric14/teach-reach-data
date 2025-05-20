@@ -1,7 +1,7 @@
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union, List
 import time
 
 # Load environment variables from .env file
@@ -104,6 +104,88 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
     finally:
         # Add a small delay to avoid rate limiting
         time.sleep(0.5)
+
+def extract_teaching_experience(teacher_data: Union[Dict[str, Any], str]) -> int:
+    """
+    Extracts the total years of teaching experience using AI.
+    
+    Args:
+        teacher_data: Either a dictionary containing teacher information or a string with experience text
+        
+    Returns:
+        int: Total years of teaching experience, or 0 if not found
+    """
+    try:
+        # If input is a dictionary, convert relevant fields to a string
+        if isinstance(teacher_data, dict):
+            # Extract all non-empty fields that might contain experience information
+            relevant_fields = []
+            
+            # Check all possible fields that might contain experience
+            for field in teacher_data:
+                if teacher_data[field] and isinstance(teacher_data[field], (str, int, float)):
+                    relevant_fields.append(str(teacher_data[field]))
+            
+            text = ' '.join(relevant_fields)
+        else:
+            text = str(teacher_data)
+        
+        if not text.strip():
+            return 0
+        
+        prompt = f"""Analyze the following text and extract the total years of teaching experience. 
+        Consider all teaching roles, even if they're not explicitly labeled as such.
+        
+        Rules:
+        1. Only count years spent in actual teaching roles (classroom teaching, tutoring, etc.)
+        2. If multiple time periods are given, sum them up
+        3. If a range is given (e.g., 2010-2015), count the number of years
+        4. If 'present' or 'current' is mentioned, count up to the current year (2025)
+        5. If no clear teaching experience is found, return 0
+        
+        Return ONLY a single number between 0 and 60 representing the total years of teaching experience.
+        
+        Example inputs and outputs:
+        - "Taught math from 2010 to 2015" -> 5
+        - "Teaching since 2018" -> 7
+        - "5 years teaching experience" -> 5
+        - "No teaching experience" -> 0
+        - "Over a decade of teaching" -> 10
+        - "Teacher at XYZ School (2015-2020), Professor at ABC University (2020-present)" -> 9
+        
+        Here's the text to analyze:
+        {text}"""
+        
+        # Print the prompt for debugging
+        print("\nAnalyzing teaching experience...")
+        
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {"role": "system", "content": "You are an expert at analyzing teaching experience and extracting the total years of experience. You must return only a single number between 0 and 60."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=10
+        )
+        
+        # Extract the first number from the response
+        import re
+        response_text = response.choices[0].message.content.strip()
+        print(f"AI Response: {response_text}")
+        
+        # Look for the first number in the response
+        match = re.search(r'\d+', response_text)
+        if match:
+            years = int(match.group(0))
+            # Ensure the result is within a reasonable range
+            return min(max(years, 0), 60)
+            
+        return 0
+        
+    except Exception as e:
+        print(f"Error extracting teaching experience: {e}")
+        return 0
 
 def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     """

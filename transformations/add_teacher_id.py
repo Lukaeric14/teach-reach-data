@@ -1,16 +1,16 @@
 import pandas as pd
 
-def transform(df):
+def transform(df, input_df):
     """
-    Creates a new dataframe with only the teacher_id column.
+    Adds a teacher_id column to the dataframe.
     
     Args:
-        df (pd.DataFrame): Input dataframe (not used in this transformation)
+        df (pd.DataFrame): The current transformed dataframe
+        input_df (pd.DataFrame): The original input dataframe
         
     Returns:
-        pd.DataFrame: New dataframe with only teacher_id column
+        pd.DataFrame: Dataframe with teacher_id column added
     """
     # Create a new dataframe with just the teacher_id column
-    result_df = pd.DataFrame({'teacher_id': [''] * len(df)})
-    
+    result_df = pd.DataFrame({'teacher_id': [''] * len(input_df)})
     return result_df

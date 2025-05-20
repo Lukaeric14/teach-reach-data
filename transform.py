@@ -1,6 +1,10 @@
 import os
 import pandas as pd
 from transformations.add_teacher_id import transform as add_teacher_id
+from transformations.add_name_column import transform as add_name_column
+from transformations.infer_subject import transform as infer_subject
+from transformations.add_headline_column import transform as add_headline_column
+from transformations.add_teacher_bio import transform as add_teacher_bio
 
 def load_transformations():
     """
@@ -8,6 +12,10 @@ def load_transformations():
     """
     return [
         add_teacher_id,
+        add_name_column,
+        infer_subject,
+        add_headline_column,
+        add_teacher_bio,
         # Add more transformation functions here as we create them
     ]
 
@@ -21,7 +29,10 @@ def process_file(input_file, output_file):
     """
     # Read the input CSV
     print(f"Reading input file: {input_file}")
-    df = pd.read_csv(input_file)
+    input_df = pd.read_csv(input_file)
+    
+    # Initialize with empty dataframe
+    df = pd.DataFrame()
     
     # Get all transformations
     transformations = load_transformations()
@@ -29,7 +40,7 @@ def process_file(input_file, output_file):
     # Apply each transformation
     for i, transform_func in enumerate(transformations, 1):
         print(f"Applying transformation {i}: {transform_func.__name__}")
-        df = transform_func(df)
+        df = transform_func(df, input_df)
     
     # Save the result
     print(f"Saving output to: {output_file}")

@@ -1,28 +1,30 @@
 import os
 import pandas as pd
-from transformations.add_teacher_id import transform as add_teacher_id
-from transformations.add_name_column import transform as add_name_column
-from transformations.infer_subject import transform as infer_subject
-from transformations.add_headline_column import transform as add_headline_column
-from transformations.add_teacher_bio import transform as add_teacher_bio
-from transformations.add_empty_columns import transform as add_empty_columns
-from transformations.add_curriculum_experience import transform as add_curriculum_experience
-from transformations.calculate_teaching_experience_ai import transform as calculate_teaching_experience
+# Import transformations with proper module syntax for numbered files
+from transformations import t_01_add_teacher_id as t01
+from transformations import t_02_add_name_column as t02
+from transformations import t_03_infer_subject as t03
+from transformations import t_04_add_headline_column as t04
+from transformations import t_05_add_teacher_bio as t05
+from transformations import t_06_add_empty_columns as t06
+from transformations import t_07_add_curriculum_experience as t07
+from transformations import t_08_calculate_teaching_experience as t08
+from transformations import t_09_add_current_location as t09
 
 def load_transformations():
     """
-    Returns a list of transformation functions in the order they should be applied.
+    Load and return all transformation functions in the correct order.
     """
     return [
-        add_teacher_id,
-        add_name_column,
-        infer_subject,
-        add_headline_column,
-        add_teacher_bio,
-        add_empty_columns,
-        add_curriculum_experience,
-        calculate_teaching_experience,
-        # Add more transformation functions here as we create them
+        t01.transform,  # Add teacher ID
+        t02.transform,  # Add name column
+        t03.transform,  # Infer subject
+        t04.transform,  # Add headline column
+        t05.transform,  # Add teacher bio
+        t06.transform,  # Add empty columns
+        t07.transform,  # Add curriculum experience
+        t08.transform,  # Calculate teaching experience
+        t09.transform   # Add current location country
     ]
 
 def process_file(input_file, output_file):

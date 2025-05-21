@@ -10,6 +10,8 @@ from transformations import t_06_add_empty_columns as t06
 from transformations import t_07_add_curriculum_experience as t07
 from transformations import t_08_calculate_teaching_experience as t08
 from transformations import t_09_add_current_location as t09
+from transformations import t_10_add_linkedin_url as t10
+from transformations import t_11_add_preferred_grade_level as t11
 
 def load_transformations():
     """
@@ -24,7 +26,9 @@ def load_transformations():
         t06.transform,  # Add empty columns
         t07.transform,  # Add curriculum experience
         t08.transform,  # Calculate teaching experience
-        t09.transform   # Add current location country
+        t09.transform,  # Add current location country
+        t10.transform,  # Add LinkedIn profile URL
+        t11.transform   # Add preferred grade level
     ]
 
 def process_file(input_file, output_file):

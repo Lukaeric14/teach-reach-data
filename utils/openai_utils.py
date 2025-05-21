@@ -187,6 +187,74 @@ def extract_teaching_experience(teacher_data: Union[Dict[str, Any], str]) -> int
         print(f"Error extracting teaching experience: {e}")
         return 0
 
+def infer_preferred_grade_level(teacher_data: Union[Dict[str, Any], str]) -> str:
+    """
+    Infers the preferred grade level for a teacher based on their experience and background.
+    
+    Args:
+        teacher_data: Either a dictionary containing teacher information or a string with the bio
+        
+    Returns:
+        str: Inferred grade level (e.g., 'Elementary', 'Middle School', 'High School', 'Early Childhood')
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        return "Not specified"
+    
+    # Extract bio from teacher_data if it's a dictionary
+    if isinstance(teacher_data, dict):
+        bio = teacher_data.get('bio', '')
+        subject = teacher_data.get('subject', '')
+        headline = teacher_data.get('headline', '')
+        experience = str(teacher_data.get('years_of_teaching_experience', ''))
+    else:
+        bio = str(teacher_data)
+        subject = ''
+        headline = ''
+        experience = ''
+    
+    prompt = f"""Based on the following teacher information, determine their most likely preferred grade level.
+    Choose the most appropriate level from these options:
+    - Early Childhood (Ages 0-5)
+    - Elementary (Grades 1-5, Ages 6-10)
+    - Middle School (Grades 6-8, Ages 11-13)
+    - High School (Grades 9-12, Ages 14-18)
+    - All Levels (if they have experience across multiple levels)
+    
+    Consider their subject, experience, and any specific mentions of grade levels.
+    
+    Teacher Information:
+    Subject: {subject}
+    Headline: {headline}
+    Experience: {experience} years
+    Bio: {bio}
+    
+    Respond with ONLY the grade level from the options above, nothing else."""
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert in education who can determine the most suitable grade level for teachers based on their experience and background."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=20,
+            temperature=0.2
+        )
+        
+        grade_level = response.choices[0].message.content.strip()
+        
+        # Validate the response matches one of our expected values
+        valid_levels = ["Early Childhood", "Elementary", "Middle School", "High School", "All Levels"]
+        if grade_level not in valid_levels:
+            return "Not specified"
+            
+        return grade_level
+        
+    except Exception as e:
+        print(f"Error inferring grade level: {str(e)}")
+        return "Not specified"
+
+
 def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     """
     Infers the most likely curriculum experience based on teacher information.

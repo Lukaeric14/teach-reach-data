@@ -1,0 +1,197 @@
+import os
+import json
+import time
+from openai import OpenAI
+from typing import Dict, Any, List
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get subject, bio, nationality, and preferred grade level in a single API call.
+    
+    Args:
+        teacher_data (dict): Dictionary containing teacher information
+    
+    Returns:
+        dict: Dictionary with subject, bio, nationality, and preferred_grade_level
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+    
+    # Convert dict to formatted string if needed
+    teacher_info = json.dumps(teacher_data, indent=2) if isinstance(teacher_data, dict) else str(teacher_data)
+    
+    prompt = f"""Based on the following teacher information, provide:
+    
+    1. Subject: What subject do they most likely teach?
+    2. Bio: A professional, anonymized 2-3 sentence bio. Remove all personally identifiable information.
+    3. Nationality: Most likely nationality based on their name (use demonym form, e.g., "Egyptian" not "Egypt")
+    4. Preferred Grade Level: Elementary, Middle School, High School, or Early Childhood
+    
+    Teacher Information:
+    {teacher_info}
+    
+    Format your response as JSON:
+    {{
+        "subject": "Subject name",
+        "bio": "Professional bio that is anonymized and 2-3 sentences long",
+        "nationality": "Nationality",
+        "preferred_grade_level": "Grade level"
+    }}
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-nano-2025-04-14",
+            messages=[
+                {"role": "system", "content": "You are an expert in education who creates structured data about teachers."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=350,
+            temperature=0.5,
+            response_format={"type": "json_object"}
+        )
+        
+        # Parse the JSON response
+        result = json.loads(response.choices[0].message.content)
+        return result
+        
+    except Exception as e:
+        print(f"Error processing teacher profile: {str(e)}")
+        return {
+            "subject": "Unknown", 
+            "bio": "Professional educator with teaching experience.", 
+            "nationality": "Not specified",
+            "preferred_grade_level": "Not specified"
+        }
+
+def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get curriculum experience, teaching experience years, current school, 
+    and school website in a single API call.
+    
+    Args:
+        teacher_data (dict): Dictionary containing teacher information
+    
+    Returns:
+        dict: Dictionary with curriculum_experience, teaching_experience_years, 
+              current_school, and school_website
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+    
+    # Convert dict to formatted string if needed
+    teacher_info = json.dumps(teacher_data, indent=2) if isinstance(teacher_data, dict) else str(teacher_data)
+    
+    prompt = f"""Based on the following teacher information, provide:
+    
+    1. Curriculum Experience: What curriculum are they most experienced with? Must be one of:
+       - British (for UK/England/Scotland curriculum)
+       - American (for US curriculum, including Common Core)
+       - IB (for International Baccalaureate)
+       - Indian (for CBSE, ICSE, or other Indian boards)
+       - UAE (for UAE national curriculum)
+       - French (for French curriculum)
+       - Australian (for Australian curriculum)
+       - Not specified (only if you cannot determine)
+    
+    2. Teaching Experience Years: Total years of teaching experience (integer)
+    
+    3. Current School: Their current school (if mentioned)
+    
+    4. School Website: URL of their current school (if available, otherwise leave empty)
+    
+    Teacher Information:
+    {teacher_info}
+    
+    Format your response as JSON:
+    {{
+        "curriculum_experience": "Curriculum name from the list above",
+        "teaching_experience_years": integer years,
+        "current_school": "School name or empty if not mentioned",
+        "school_website": "Website URL or empty if not available"
+    }}"""
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-nano-2025-04-14",
+            messages=[
+                {"role": "system", "content": "You are an expert in international education who extracts structured data about teachers' experience."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=350,
+            temperature=0.5,
+            response_format={"type": "json_object"}
+        )
+        
+        # Parse the JSON response
+        result = json.loads(response.choices[0].message.content)
+        
+        # Ensure teaching_experience_years is an integer
+        if 'teaching_experience_years' in result:
+            try:
+                result['teaching_experience_years'] = int(result['teaching_experience_years'])
+            except (ValueError, TypeError):
+                result['teaching_experience_years'] = 0
+                
+        return result
+        
+    except Exception as e:
+        print(f"Error processing curriculum and school: {str(e)}")
+        return {
+            "curriculum_experience": "Not specified", 
+            "teaching_experience_years": 0, 
+            "current_school": "",
+            "school_website": ""
+        }
+
+def process_teachers_batch(teachers_data: List[Dict[str, Any]], batch_size: int = 5) -> List[Dict[str, Any]]:
+    """
+    Process a batch of teachers with appropriate rate limiting
+    
+    Args:
+        teachers_data: List of dictionaries containing teacher information
+        batch_size: Number of teachers to process in each sub-batch
+    
+    Returns:
+        List of processed teacher data
+    """
+    results = []
+    
+    # Process in smaller sub-batches to avoid rate limits
+    for i in range(0, len(teachers_data), batch_size):
+        sub_batch = teachers_data[i:i+batch_size]
+        print(f"  Processing sub-batch {i//batch_size + 1} ({len(sub_batch)} teachers)")
+        
+        batch_results = []
+        for teacher_data in sub_batch:
+            # Get the first set of transformations
+            profile_data = batch_teacher_profile(teacher_data)
+            
+            # Wait a moment to avoid rate limiting
+            time.sleep(0.5)
+            
+            # Get the second set of transformations
+            curriculum_data = batch_curriculum_and_location(teacher_data)
+            
+            # Combine results
+            combined_data = {**profile_data, **curriculum_data}
+            batch_results.append(combined_data)
+            
+            # Small delay between teachers in the same sub-batch
+            time.sleep(0.2)
+        
+        results.extend(batch_results)
+        
+        # Add a longer delay between sub-batches
+        if i + batch_size < len(teachers_data):
+            print("  Waiting between sub-batches...")
+            time.sleep(2)
+    
+    return results

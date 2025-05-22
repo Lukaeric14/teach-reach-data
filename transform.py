@@ -16,6 +16,10 @@ from transformations import t_10_add_linkedin_url as t10
 from transformations import t_11_add_preferred_grade_level as t11
 from transformations import t_12_add_created_at as t12
 from transformations import t_13_infer_nationality as t13
+from transformations import t_14_current_school as t14
+from transformations import t_15_current_school_website as t15
+from transformations import t_16_add_email_column as t16
+from transformations import t_17_add_source_id as t17
 
 def load_transformations():
     """
@@ -34,7 +38,11 @@ def load_transformations():
         t10.transform,  # Add LinkedIn profile URL
         t11.transform,  # Add preferred grade level
         t12.transform,  # Add created_at timestamp
-        t13.transform   # Infer nationality from name
+        t13.transform,  # Infer nationality from name
+        t14.transform,  # Add current school
+        t15.transform,  # Add current school website
+        t16.transform,  # Add Email column
+        t17.transform   # Add source_id column
     ]
 
 def process_file(input_file, output_file):

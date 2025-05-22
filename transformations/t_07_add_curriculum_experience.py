@@ -17,7 +17,7 @@ def transform(df: pd.DataFrame, input_df: pd.DataFrame) -> pd.DataFrame:
     result_df = df.copy()
     
     # Initialize the curriculum_experience column
-    result_df['preferred_curriculum_experience'] = ''
+    result_df['curriculum_experience'] = ''
     
     # Generate curriculum experience for each teacher
     for idx, row in input_df.iterrows():
@@ -27,9 +27,9 @@ def transform(df: pd.DataFrame, input_df: pd.DataFrame) -> pd.DataFrame:
         try:
             # Infer the curriculum experience
             curriculum = infer_curriculum_experience(teacher_data)
-            result_df.at[idx, 'preferred_curriculum_experience'] = curriculum
+            result_df.at[idx, 'curriculum_experience'] = curriculum
         except Exception as e:
             print(f"Error processing row {idx}: {str(e)}")
-            result_df.at[idx, 'preferred_curriculum_experience'] = 'Not specified'
+            result_df.at[idx, 'curriculum_experience'] = 'Not specified'
     
     return result_df

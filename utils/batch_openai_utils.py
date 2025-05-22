@@ -1,15 +1,22 @@
 import os
 import json
 import time
+import re
 from openai import OpenAI
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
+
+# Import school curriculum mapping
+from utils.school_curriculum_mapping import load_school_curriculum_mapping, get_curriculum_for_school
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Load school curriculum mapping
+SCHOOL_CURRICULUM_MAPPING = load_school_curriculum_mapping()
 
 def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -48,7 +55,7 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are an expert in education who creates structured data about teachers."},
                 {"role": "user", "content": prompt}
@@ -83,8 +90,39 @@ def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         dict: Dictionary with curriculum_experience, teaching_experience_years, 
               current_school, and school_website
     """
+    # Initialize default result
+    result = {
+        "curriculum_experience": "Not specified",
+        "teaching_experience_years": 0,
+        "current_school": "",
+        "school_website": ""
+    }
+    
+    # Try to get current school from teacher data
+    current_school = ""
+    if isinstance(teacher_data, dict):
+        current_school = teacher_data.get('current_school', '')
+        if not current_school and 'headline' in teacher_data:
+            # Try to extract school from headline
+            headline = teacher_data['headline']
+            if isinstance(headline, str):
+                # Look for patterns like "at School Name" or "Teacher at School"
+                match = re.search(r'(?:at|@|from|,|\bat\b)\s*([A-Z][A-Za-z0-9\s\-&\']+(?:School|Academy|College|University|Institute|Nursery|Kindergarten|GEMS|SABIS|RAK Academy|Dubai College))', headline, re.IGNORECASE)
+                if match:
+                    current_school = match.group(1).strip()
+    
+    # Use the school curriculum mapping if we have a school
+    if current_school:
+        curriculum = get_curriculum_for_school(current_school, SCHOOL_CURRICULUM_MAPPING)
+        if curriculum:
+            result["curriculum_experience"] = curriculum
+            result["current_school"] = current_school
+            return result
+    
+    # Fall back to OpenAI if we couldn't determine from the mapping
     if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+        print("OpenAI API key not found. Using default values.")
+        return result
     
     # Convert dict to formatted string if needed
     teacher_info = json.dumps(teacher_data, indent=2) if isinstance(teacher_data, dict) else str(teacher_data)
@@ -107,6 +145,11 @@ def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     
     4. School Website: URL of their current school (if available, otherwise leave empty)
     
+    Important Notes:
+    - GEMS schools typically follow the British curriculum
+    - SABIS schools typically follow the IB curriculum
+    - American schools typically follow the American curriculum
+    
     Teacher Information:
     {teacher_info}
     
@@ -120,7 +163,7 @@ def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are an expert in international education who extracts structured data about teachers' experience."},
                 {"role": "user", "content": prompt}
@@ -131,25 +174,25 @@ def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         )
         
         # Parse the JSON response
-        result = json.loads(response.choices[0].message.content)
+        api_result = json.loads(response.choices[0].message.content)
         
-        # Ensure teaching_experience_years is an integer
-        if 'teaching_experience_years' in result:
+        # Update our result with API response
+        if 'curriculum_experience' in api_result:
+            result['curriculum_experience'] = api_result['curriculum_experience']
+        if 'teaching_experience_years' in api_result:
             try:
-                result['teaching_experience_years'] = int(result['teaching_experience_years'])
+                result['teaching_experience_years'] = int(api_result['teaching_experience_years'])
             except (ValueError, TypeError):
                 result['teaching_experience_years'] = 0
+        if 'current_school' in api_result and api_result['current_school']:
+            result['current_school'] = api_result['current_school']
+        if 'school_website' in api_result and api_result['school_website']:
+            result['school_website'] = api_result['school_website']
                 
-        return result
-        
     except Exception as e:
-        print(f"Error processing curriculum and school: {str(e)}")
-        return {
-            "curriculum_experience": "Not specified", 
-            "teaching_experience_years": 0, 
-            "current_school": "",
-            "school_website": ""
-        }
+        print(f"Error processing curriculum and school with OpenAI: {str(e)}")
+    
+    return result
 
 def process_teachers_batch(teachers_data: List[Dict[str, Any]], batch_size: int = 5) -> List[Dict[str, Any]]:
     """

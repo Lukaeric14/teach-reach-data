@@ -272,7 +272,7 @@ def infer_preferred_grade_level(teacher_data: Union[Dict[str, Any], str]) -> str
 def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     """
     Infers the most likely curriculum experience based on teacher information.
-    First tries to match against known Dubai schools, then falls back to AI inference.
+    Uses nationality and school information to determine the most likely curriculum.
     
     Args:
         teacher_data (dict): Dictionary containing teacher information
@@ -280,103 +280,78 @@ def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     Returns:
         str: Inferred curriculum (British, American, IB, Indian, UAE, or 'Not specified')
     """
-    from utils.school_utils import load_dubai_schools, get_curriculum_from_school
+    print("\n=== Starting curriculum inference ===")
+    print(f"Teacher data keys: {list(teacher_data.keys())}")
     
-    # Only use school matching for specific fields that are likely to contain school names
-    school_fields = ['current_school', 'previous_school', 'education', 'experience', 'headline']
-    schools_data = load_dubai_schools()
-    
-    # Check specific fields that are likely to contain school names
-    for field in school_fields:
-        if field not in teacher_data or not teacher_data[field] or not isinstance(teacher_data[field], str):
-            continue
-            
-        value = teacher_data[field]
-        if len(value) < 5:  # Skip very short values
-            continue
-            
-        # Check if this field contains a known school
-        matched_school, curriculum = get_curriculum_from_school(value, schools_data)
-        if curriculum and matched_school:
-            # Only use the match if we're very confident
-            clean_value = ' '.join([w for w in value.lower().split() if len(w) > 3])
-            clean_school = ' '.join([w for w in matched_school.lower().split() if len(w) > 3])
-            
-            # If the school name is clearly mentioned in the field
-            if clean_school in clean_value or clean_value in clean_school:
-                print(f"Confident school match: {matched_school} -> {curriculum}")
-                # Map curriculum to our standard format
-                curriculum = curriculum.strip()
-                if 'british' in curriculum.lower() or 'uk' in curriculum.lower():
-                    return "British"
-                elif 'american' in curriculum.lower() or 'us' in curriculum.lower() or 'u.s.' in curriculum.lower():
-                    return "American"
-                elif 'ib' in curriculum.upper() or 'international baccalaureate' in curriculum.lower():
-                    return "IB"
-                elif 'indian' in curriculum.lower() or 'cbse' in curriculum.lower() or 'icse' in curriculum.lower():
-                    return "Indian"
-                elif 'uae' in curriculum.upper() or 'u.a.e' in curriculum.upper() or 'ministry of education' in curriculum.lower():
-                    return "UAE"
-                elif 'french' in curriculum.lower():
-                    return "French"
-                elif 'australian' in curriculum.lower():
-                    return "Australian"
-    
-    # If no confident school match found, use AI inference
     if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+        print("Error: OPENAI_API_KEY not set")
+        return "Not specified"
     
-    # Prepare the prompt for the AI with more specific instructions
-    prompt = f"""Analyze the following teacher information and determine the most likely curriculum they have experience with.
+    # Get relevant information with debug output
+    nationality = str(teacher_data.get('nationality', '')).strip()
+    current_school = str(teacher_data.get('current_school', '')).strip()
+    experience = str(teacher_data.get('experience', '')).strip()
+    education = str(teacher_data.get('education', '')).strip()
     
-    IMPORTANT: Only respond with ONE of the exact options below, nothing else.
+    print(f"Nationality: {nationality}")
+    print(f"Current School: {current_school}")
+    print(f"Experience: {experience[:100]}..." if len(experience) > 100 else f"Experience: {experience}")
+    print(f"Education: {education[:100]}..." if len(education) > 100 else f"Education: {education}")
     
-    CURRICULUM OPTIONS (MUST USE EXACTLY THESE):
-    - British (for UK/England/Scotland curriculum)
-    - American (for US curriculum, including Common Core)
-    - IB (for International Baccalaureate)
-    - Indian (for CBSE, ICSE, or other Indian boards)
-    - UAE (for UAE national curriculum)
-    - French (for French curriculum)
-    - Australian (for Australian curriculum)
-    - Not specified (only if you cannot determine from the information)
-    
-    CONSIDER THESE FACTORS:
-    1. Nationality and education background
-    2. Work experience at specific schools
-    3. Subjects and grade levels taught
-    4. Any curriculum-specific terminology
-    
-    If the information is unclear or mixed, choose the most likely single option.
-    Only use "Not specified" if there's truly no indication of curriculum experience.
+    # Prepare the prompt
+    prompt = f"""Based on the teacher's information below, determine the most likely curriculum they have experience with.
     
     Teacher Information:
-    {teacher_data}
-    """
+    - Nationality: {nationality}
+    - Current School: {current_school}
+    - Experience: {experience}
+    - Education: {education}
+    
+    CURRICULUM OPTIONS (respond with ONLY one of these):
+    - British
+    - American
+    - IB
+    - Indian
+    - UAE
+    - French
+    - Australian
+    - Not specified
+    
+    Respond with ONLY the curriculum name from the options above:"""
     
     try:
+        print("\nSending request to OpenAI...")
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are an expert in international education systems. Your task is to determine the most likely curriculum a teacher has experience with based on their background and experience."},
+                {"role": "system", "content": "You are an expert in international education systems. Analyze the teacher's nationality and school information to determine the most likely curriculum they have experience with. Respond with ONLY the curriculum name from the provided options."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=20,
-            temperature=0.1  # Keep it low for more deterministic responses
+            temperature=0.1
         )
         
         curriculum = response.choices[0].message.content.strip()
-        
-        # Validate the response is one of our allowed options
         valid_curricula = ["British", "American", "IB", "Indian", "UAE", "French", "Australian", "Not specified"]
-        return curriculum if curriculum in valid_curricula else "Not specified"
+        
+        print(f"Raw response: {curriculum}")
+        
+        # Clean up the response
+        curriculum = curriculum.strip('.').strip()
+        
+        if curriculum not in valid_curricula:
+            print(f"Warning: Invalid curriculum '{curriculum}' received. Defaulting to 'Not specified'")
+            return "Not specified"
+            
+        print(f"Inferred curriculum: {curriculum}")
+        return curriculum
         
     except Exception as e:
         print(f"Error inferring curriculum: {str(e)}")
         return "Not specified"
     finally:
-        # Add a small delay to avoid rate limiting
         time.sleep(0.5)
+        print("=== End of curriculum inference ===\n")
 
 def infer_nationality_from_name(name: str) -> str:
     """

@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+from openai import OpenAI
+from dotenv import load_dotenv
 # Import transformations with proper module syntax for numbered files
 from transformations import t_01_add_teacher_id as t01
 from transformations import t_02_add_name_column as t02
@@ -12,6 +14,8 @@ from transformations import t_08_calculate_teaching_experience as t08
 from transformations import t_09_add_current_location as t09
 from transformations import t_10_add_linkedin_url as t10
 from transformations import t_11_add_preferred_grade_level as t11
+from transformations import t_12_add_created_at as t12
+from transformations import t_13_infer_nationality as t13
 
 def load_transformations():
     """
@@ -28,7 +32,9 @@ def load_transformations():
         t08.transform,  # Calculate teaching experience
         t09.transform,  # Add current location country
         t10.transform,  # Add LinkedIn profile URL
-        t11.transform   # Add preferred grade level
+        t11.transform,  # Add preferred grade level
+        t12.transform,  # Add created_at timestamp
+        t13.transform   # Infer nationality from name
     ]
 
 def process_file(input_file, output_file):
@@ -59,7 +65,35 @@ def process_file(input_file, output_file):
     df.to_csv(output_file, index=False)
     print(f"Successfully processed {len(df)} records")
 
+def list_available_models():
+    """List all available models from the OpenAI API."""
+    try:
+        # Load environment variables from .env file if it exists
+        load_dotenv()
+        
+        # Initialize the client with the API key from environment variables
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        print("\nFetching available models...")
+        models = client.models.list()
+        
+        print("\nAvailable models:")
+        for model in sorted(model.id for model in models.data):
+            print(f"- {model}")
+            
+    except Exception as e:
+        print(f"\nError listing models: {e}")
+        print("\nPlease make sure you have set the OPENAI_API_KEY environment variable.")
+        print("You can set it temporarily by running:")
+        print("export OPENAI_API_KEY='your-api-key-here'")
+        print("\nOr create a .env file in the project root with:")
+        print("OPENAI_API_KEY=your-api-key-here")
+
 if __name__ == "__main__":
+    # First list available models
+    list_available_models()
+    
+    # Then run the transformations
     input_file = "inputv2.csv"
     output_file = "output.csv"
     process_file(input_file, output_file)

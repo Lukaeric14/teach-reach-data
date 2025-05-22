@@ -24,9 +24,7 @@ def infer_teacher_subject(teacher_data: Dict[str, Any]) -> str:
         raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     
     # Prepare the prompt for the AI
-    prompt = f"""Based on the following teacher information, infer the most likely subject they teach.
-    Respond with just the subject name (e.g., "Mathematics", "English Literature"). 
-    If uncertain, respond with "Not specified" - only use this if you are really uncertain.
+    prompt = f"""Based on the following teacher information, what subject do they most likely teach?
     
     Teacher Information:
     {teacher_data}
@@ -35,7 +33,7 @@ def infer_teacher_subject(teacher_data: Dict[str, Any]) -> str:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1",  # Using a valid model name
+            model="gpt-4.1-nano-2025-04-14",  # Using GPT-4.1 Nano
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that determines what subject a teacher teaches based on their information."},
                 {"role": "user", "content": prompt}
@@ -68,16 +66,14 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
         raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     
     # Prepare the prompt for the AI
-    prompt = f"""Create a concise, professional bio based on the following teacher information.
-    The bio should be highlighting their experience and expertise.
+    prompt = f"""Create a professional, anonymized bio for a teacher based on the following information.
     
-    IMPORTANT RULES:
-    - NEVER mention any names (teacher's name, school names, or organization names)
-    - NEVER include any specific location information
-    - Keep it professional and focused on their teaching experience
-    - Keep it to maximum 3 sentences.
-    - Use generic terms instead of specific institution names (e.g., "international schools" instead of school names)
-    - If no relevant information is available, return "Professional educator with teaching experience."
+    Instructions:
+    1. Remove all personally identifiable information (names, specific schools, locations, etc.)
+    2. Focus on their teaching experience, subjects, and educational background
+    3. Keep it professional and concise (2-3 sentences)
+    4. Use generic terms (e.g., "international school" instead of school names)
+    5. Do not include any specific years or durations
     
     Teacher Information:
     {teacher_data}
@@ -86,7 +82,7 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-4.1-nano-2025-04-14",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that creates professional, anonymized teacher bios."},
                 {"role": "user", "content": prompt}
@@ -118,36 +114,39 @@ def extract_teaching_experience(teacher_data: Union[Dict[str, Any], str]) -> int
     try:
         # If input is a dictionary, convert relevant fields to a string
         if isinstance(teacher_data, dict):
-            # Extract all non-empty fields that might contain experience information
-            relevant_fields = []
+            # Extract relevant fields that might contain experience information
+            relevant_fields = [
+                'experience', 'work_experience', 'employment_history',
+                'teaching_experience', 'background', 'summary', 'headline', 'bio'
+            ]
             
-            # Check all possible fields that might contain experience
-            for field in teacher_data:
-                if teacher_data[field] and isinstance(teacher_data[field], (str, int, float)):
-                    relevant_fields.append(str(teacher_data[field]))
+            # Combine all relevant fields into a single string
+            text_parts = []
+            for field in relevant_fields:
+                if field in teacher_data and teacher_data[field]:
+                    text_parts.append(str(teacher_data[field]))
             
-            text = ' '.join(relevant_fields)
+            if not text_parts:
+                return 0
+                
+            text = " ".join(text_parts)
         else:
             text = str(teacher_data)
         
         if not text.strip():
             return 0
+            
+        # Prepare the prompt for the AI
+        prompt = f"""Analyze the following text and extract the total years of teaching experience.
+        Return ONLY a single number representing the total years of teaching experience.
         
-        prompt = f"""Analyze the following text and extract the total years of teaching experience. 
-        Consider all teaching roles, even if they're not explicitly labeled as such.
+        Instructions:
+        1. Look for phrases indicating teaching experience (e.g., "X years teaching", "taught for X years")
+        2. Sum up all teaching experience if mentioned in multiple places
+        3. Return 0 if no teaching experience is mentioned
+        4. Only return a number, no text or explanations
         
-        Rules:
-        1. Only count years spent in actual teaching roles (classroom teaching, tutoring, etc.)
-        2. If multiple time periods are given, sum them up
-        3. If a range is given (e.g., 2010-2015), count the number of years
-        4. If 'present' or 'current' is mentioned, count up to the current year (2025)
-        5. If no clear teaching experience is found, return 0
-        
-        Return ONLY a single number between 0 and 60 representing the total years of teaching experience.
-        
-        Example inputs and outputs:
-        - "Taught math from 2010 to 2015" -> 5
-        - "Teaching since 2018" -> 7
+        Examples:
         - "5 years teaching experience" -> 5
         - "No teaching experience" -> 0
         - "Over a decade of teaching" -> 10
@@ -160,7 +159,7 @@ def extract_teaching_experience(teacher_data: Union[Dict[str, Any], str]) -> int
         print("\nAnalyzing teaching experience...")
         
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4.1-nano-2025-04-14",
             messages=[
                 {"role": "system", "content": "You are an expert at analyzing teaching experience and extracting the total years of experience. You must return only a single number between 0 and 60."},
                 {"role": "user", "content": prompt}
@@ -189,7 +188,8 @@ def extract_teaching_experience(teacher_data: Union[Dict[str, Any], str]) -> int
 
 def infer_preferred_grade_level(teacher_data: Union[Dict[str, Any], str]) -> str:
     """
-    Infers the preferred grade level for a teacher based on their experience and background.
+    Infers the preferred grade level for a teacher based on their experience, background,
+    school history, and nationality.
     
     Args:
         teacher_data: Either a dictionary containing teacher information or a string with the bio
@@ -200,45 +200,60 @@ def infer_preferred_grade_level(teacher_data: Union[Dict[str, Any], str]) -> str
     if not os.getenv("OPENAI_API_KEY"):
         return "Not specified"
     
-    # Extract bio from teacher_data if it's a dictionary
+    # If input is a dictionary, extract relevant information
     if isinstance(teacher_data, dict):
+        # Get relevant fields
         bio = teacher_data.get('bio', '')
+        experience = teacher_data.get('experience', '')
         subject = teacher_data.get('subject', '')
-        headline = teacher_data.get('headline', '')
-        experience = str(teacher_data.get('years_of_teaching_experience', ''))
+        education = teacher_data.get('education', '')
+        
+        # Combine relevant information
+        text = f"""Bio: {bio}
+        Experience: {experience}
+        Subject: {subject}
+        Education: {education}"""
     else:
-        bio = str(teacher_data)
-        subject = ''
-        headline = ''
-        experience = ''
+        text = str(teacher_data)
     
-    prompt = f"""Based on the following teacher information, determine their most likely preferred grade level.
-    Choose the most appropriate level from these options:
-    - Early Childhood (Ages 0-5)
-    - Elementary (Grades 1-5, Ages 6-10)
-    - Middle School (Grades 6-8, Ages 11-13)
-    - High School (Grades 9-12, Ages 14-18)
+    # Get nationality for additional context if available
+    nationality = ""
+    if isinstance(teacher_data, dict) and 'nationality' in teacher_data:
+        nationality = f"Nationality: {teacher_data['nationality']}"
+    
+    nationality_context = f"""
+    Consider the following nationality information which might influence educational systems:
+    {nationality}
+    """ if nationality else ""
+    
+    # Prepare the prompt for the AI
+    prompt = f"""Based on the following teacher information, determine the most suitable grade level they would prefer to teach.
+    
+    GRADE LEVEL OPTIONS (MUST CHOOSE ONE):
+    - Early Childhood (Pre-K to Kindergarten, ages 3-5)
+    - Elementary (Grades 1-5, ages 6-10)
+    - Middle School (Grades 6-8, ages 11-13)
+    - High School (Grades 9-12, ages 14-18)
     - All Levels (if they have experience across multiple levels)
     
-    Consider their subject, experience, and any specific mentions of grade levels.
-    
-    Teacher Information:
-    Subject: {subject}
-    Headline: {headline}
-    Experience: {experience} years
-    Bio: {bio}
+    CONSIDER THESE FACTORS:
+    1. Teaching experience and subjects taught
+    2. Educational background and qualifications
+    3. Any specific age groups mentioned
+    4. Cultural or educational system preferences
+    {nationality_context}
     
     Respond with ONLY the grade level from the options above, nothing else."""
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4.1-nano-2025-04-14",
             messages=[
-                {"role": "system", "content": "You are an expert in education who can determine the most suitable grade level for teachers based on their experience and background."},
+                {"role": "system", "content": "You are an expert in international education who can determine the most suitable grade level for teachers based on their experience, subject matter, school curriculum, and educational background. You understand different educational systems worldwide."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=20,
-            temperature=0.2
+            temperature=0.1  # Lower temperature for more consistent results
         )
         
         grade_level = response.choices[0].message.content.strip()
@@ -253,7 +268,6 @@ def infer_preferred_grade_level(teacher_data: Union[Dict[str, Any], str]) -> str
     except Exception as e:
         print(f"Error inferring grade level: {str(e)}")
         return "Not specified"
-
 
 def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     """
@@ -342,7 +356,7 @@ def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-4.1-nano-2025-04-14",
             messages=[
                 {"role": "system", "content": "You are an expert in international education systems. Your task is to determine the most likely curriculum a teacher has experience with based on their background and experience."},
                 {"role": "user", "content": prompt}
@@ -359,6 +373,60 @@ def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
         
     except Exception as e:
         print(f"Error inferring curriculum: {str(e)}")
+        return "Not specified"
+    finally:
+        # Add a small delay to avoid rate limiting
+        time.sleep(0.5)
+
+def infer_nationality_from_name(name: str) -> str:
+    """
+    Infers the most likely nationality based on a person's name using AI.
+    
+    Args:
+        name (str): The full name of the person
+        
+    Returns:
+        str: Inferred nationality (country name) or 'Not specified' if uncertain
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        return "Not specified"
+    
+    if not name or not isinstance(name, str) or len(name.strip()) < 2:
+        return "Not specified"
+    
+    prompt = f"""Based on the following name, infer the most likely nationality (country of origin).
+    Consider common naming patterns, surnames, and given names associated with different cultures.
+    
+    RULES:
+    1. Respond with ONLY the country name in English (e.g., "Egyptian", "Indian", "British")
+    2. If uncertain, respond with "Not specified"
+    3. Use demonyms (e.g., "Egyptian" not "Egypt", "American" not "United States")
+    
+    Name: {name}
+    
+    Most likely nationality:"""
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-nano-2025-04-14",
+            messages=[
+                {"role": "system", "content": "You are an expert in onomastics and cultural naming conventions. Your task is to determine the most likely nationality based on a person's name."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=15,
+            temperature=0.1
+        )
+        
+        nationality = response.choices[0].message.content.strip()
+        
+        # Basic validation of the response
+        if not nationality or nationality.lower() == 'not specified' or len(nationality) > 30:
+            return "Not specified"
+            
+        return nationality
+        
+    except Exception as e:
+        print(f"Error inferring nationality: {str(e)}")
         return "Not specified"
     finally:
         # Add a small delay to avoid rate limiting

@@ -30,8 +30,12 @@ def transform(df: pd.DataFrame, input_df: pd.DataFrame) -> pd.DataFrame:
             'bio': row.get('bio', ''),
             'subject': row.get('subject', ''),
             'headline': row.get('headline', ''),
-            'years_of_teaching_experience': row.get('years_of_teaching_experience', 0)
+            'years_of_teaching_experience': row.get('years_of_teaching_experience', 0),
+            'nationality': row.get('nationality', '')  # Add nationality for context
         }
+        
+        # Also include the full row in case we need to access other fields
+        teacher_info.update({k: v for k, v in row.items() if k not in teacher_info})
         
         # Get the AI-inferred grade level
         grade_level = infer_preferred_grade_level(teacher_info)

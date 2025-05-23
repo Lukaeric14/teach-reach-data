@@ -132,8 +132,11 @@ def process_in_batches(df, input_df, output_file, batch_size=5):
             # Second API call - curriculum and school data
             school_data = batch_curriculum_and_school(teacher_data)
             
-            # Update the dataframe with all results
+            # Update the dataframe with all results, ensuring proper data types
             for field, value in profile_data.items():
+                # Convert boolean to string for CSV compatibility
+                if field == 'is_currently_teacher' and isinstance(value, bool):
+                    value = str(value).lower()
                 df.at[idx, field] = value
                 
             for field, value in school_data.items():
@@ -244,39 +247,61 @@ def list_available_models():
         print("OPENAI_API_KEY=your-api-key-here")
 
 if __name__ == "__main__":
-    # Create a timestamp for new output file
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    import argparse
+    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Process teacher data with AI enhancements.')
+    parser.add_argument('-i', '--input', default='inputv2.csv', 
+                        help='Input CSV file (default: inputv2.csv)')
+    parser.add_argument('-o', '--output', 
+                        help='Output CSV file (default: output_<timestamp>.csv)')
+    parser.add_argument('-b', '--batch-size', type=int, default=5,
+                        help='Number of teachers to process in each batch (default: 5)')
+    parser.add_argument('--continue', dest='continue_existing', action='store_true',
+                        help='Continue from existing output file if it exists')
+    
+    args = parser.parse_args()
+    
+    # Set default output filename if not provided
+    if not args.output:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output = f"output_{timestamp}.csv"
     
     # First list available models
     list_available_models()
     
-    # Get input parameters
-    input_file = "inputv2.csv"
-    output_file = "new_output.csv"
-    batch_size = 5  # Process 5 teachers at a time
-    
-    # Backup existing output if it exists
-    if os.path.exists("output.csv") and not os.path.exists("output.csv.backup"):
-        print("Creating backup of output.csv")
-        os.system("cp output.csv output.csv.backup")
+    # Backup existing output if it exists and not continuing
+    if not args.continue_existing and os.path.exists(args.output) and not os.path.exists(f"{args.output}.backup"):
+        print(f"Creating backup of {args.output}")
+        os.system(f"cp \"{args.output}\" \"{args.output}.backup\"")
     
     # Read the input file to check city/country columns
-    input_df = pd.read_csv(input_file)
-    print("\nChecking input data for location information...")
-    print(f"Input columns: {list(input_df.columns)}")
-    if 'city' in input_df.columns:
-        print(f"City column exists with {input_df['city'].count()} non-null values")
-    if 'country' in input_df.columns:
-        print(f"Country column exists with {input_df['country'].count()} non-null values")
+    try:
+        input_df = pd.read_csv(args.input)
+        print(f"\nChecking input data for location information...")
+        print(f"Input file: {args.input}")
+        print(f"Input columns: {list(input_df.columns)}")
+        if 'city' in input_df.columns:
+            print(f"City column exists with {input_df['city'].count()} non-null values")
+        if 'country' in input_df.columns:
+            print(f"Country column exists with {input_df['country'].count()} non-null values")
+    except Exception as e:
+        print(f"Error reading input file {args.input}: {e}")
+        exit(1)
     
-    # Remove the existing output file to force reprocessing
-    if os.path.exists(output_file):
-        print(f"\nRemoving existing {output_file} to force reprocessing")
-        os.remove(output_file)
+    # Remove the existing output file to force reprocessing if not continuing
+    if not args.continue_existing and os.path.exists(args.output):
+        print(f"\nRemoving existing {args.output} to force reprocessing")
+        os.remove(args.output)
     
     # Process the file
     start_time = time.time()
-    process_file(input_file, output_file, batch_size=batch_size, continue_from_existing=False)
-    end_time = time.time()
-    
-    print(f"\nProcessing completed in {end_time - start_time:.2f} seconds")
+    try:
+        process_file(args.input, args.output, batch_size=args.batch_size, 
+                   continue_from_existing=args.continue_existing)
+        end_time = time.time()
+        print(f"\nProcessing completed in {end_time - start_time:.2f} seconds")
+        print(f"Output saved to: {os.path.abspath(args.output)}")
+    except Exception as e:
+        print(f"\nError during processing: {e}")
+        exit(1)

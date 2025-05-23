@@ -5,6 +5,14 @@ import re
 from openai import OpenAI
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
+import sys
+import os
+
+# Add project root to path to allow absolute imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import configurations
+from config.openai_config import get_model_config
 
 # Import school curriculum mapping
 from utils.school_curriculum_mapping import load_school_curriculum_mapping, get_curriculum_for_school
@@ -40,6 +48,7 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     2. Bio: A professional, anonymized 2-3 sentence bio. Remove all personally identifiable information.
     3. Nationality: Most likely nationality based on their name (use demonym form, e.g., "Egyptian" not "Egypt")
     4. Preferred Grade Level: Elementary, Middle School, High School, or Early Childhood
+    5. Is Currently Teaching: TRUE if they are currently a teacher (employed or unemployed), FALSE if they hold another position (coordinator, HR, etc.)
     
     Teacher Information:
     {teacher_info}
@@ -49,20 +58,24 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         "subject": "Subject name",
         "bio": "Professional bio that is anonymized and 2-3 sentences long",
         "nationality": "Nationality",
-        "preferred_grade_level": "Grade level"
+        "preferred_grade_level": "Grade level",
+        "is_currently_teacher": boolean
     }}
     """
     
     try:
+        # Get model configuration
+        config = get_model_config("teacher_profile")
+        
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=config["model"],
             messages=[
                 {"role": "system", "content": "You are an expert in education who creates structured data about teachers."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=350,
-            temperature=0.5,
-            response_format={"type": "json_object"}
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"],
+            response_format=config.get("response_format", None)
         )
         
         # Parse the JSON response
@@ -75,7 +88,8 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
             "subject": "Unknown", 
             "bio": "Professional educator with teaching experience.", 
             "nationality": "Not specified",
-            "preferred_grade_level": "Not specified"
+            "preferred_grade_level": "Not specified",
+            "is_currently_teacher": True
         }
 
 def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -162,15 +176,18 @@ def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     }}"""
     
     try:
+        # Get model configuration
+        config = get_model_config("curriculum_school")
+        
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=config["model"],
             messages=[
                 {"role": "system", "content": "You are an expert in international education who extracts structured data about teachers' experience."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=350,
-            temperature=0.5,
-            response_format={"type": "json_object"}
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"],
+            response_format=config.get("response_format", None)
         )
         
         # Parse the JSON response

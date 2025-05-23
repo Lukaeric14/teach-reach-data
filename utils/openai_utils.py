@@ -1,8 +1,16 @@
 import os
+import sys
+from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional, Union, List
 import time
+
+# Add project root to path to allow absolute imports
+sys.path.append(str(Path(__file__).parent.parent))
+
+# Import configurations
+from config.openai_config import get_model_config
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,14 +40,17 @@ def infer_teacher_subject(teacher_data: Dict[str, Any]) -> str:
     Subject:"""
     
     try:
+        # Get model configuration
+        config = get_model_config("teacher_subject")
+        
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",  # Using GPT-4.1 Nano
+            model=config["model"],
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that determines what subject a teacher teaches based on their information."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=20,
-            temperature=0.3
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"]
         )
         
         subject = response.choices[0].message.content.strip()
@@ -81,14 +92,17 @@ def generate_teacher_bio(teacher_data: Dict[str, Any]) -> str:
     Bio:"""
     
     try:
+        # Get model configuration
+        config = get_model_config("teacher_bio")
+        
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model=config["model"],
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that creates professional, anonymized teacher bios."},
+                {"role": "system", "content": "You are a helpful assistant that generates professional, anonymized teacher bios. Remove all personally identifiable information."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=100,
-            temperature=0.7
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"]
         )
         
         bio = response.choices[0].message.content.strip()
@@ -321,14 +335,17 @@ def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     
     try:
         print("\nSending request to OpenAI...")
+        # Get model configuration
+        config = get_model_config("curriculum")
+        
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=config["model"],
             messages=[
                 {"role": "system", "content": "You are an expert in international education systems. Analyze the teacher's nationality and school information to determine the most likely curriculum they have experience with. Respond with ONLY the curriculum name from the provided options."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=20,
-            temperature=0.1
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"]
         )
         
         curriculum = response.choices[0].message.content.strip()
@@ -382,14 +399,17 @@ def infer_nationality_from_name(name: str) -> str:
     Most likely nationality:"""
     
     try:
+        # Get model configuration
+        config = get_model_config("nationality")
+        
         response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model=config["model"],
             messages=[
-                {"role": "system", "content": "You are an expert in onomastics and cultural naming conventions. Your task is to determine the most likely nationality based on a person's name."},
+                {"role": "system", "content": "You are an expert in onomastics and cultural naming conventions. Analyze the name and provide the most likely nationality."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=15,
-            temperature=0.1
+            max_tokens=config["max_tokens"],
+            temperature=config["temperature"]
         )
         
         nationality = response.choices[0].message.content.strip()

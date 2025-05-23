@@ -18,11 +18,11 @@ from transformations import t_10_add_linkedin_url as t10
 from transformations import t_12_add_created_at as t12
 from transformations import t_16_add_email_column as t16
 from transformations import t_17_add_source_id as t17
+from transformations import t_50_calculate_profile_completion as t50
 
 def load_base_transformations():
     """
-    Load and return only the transformation functions that don't use OpenAI API calls.
-    These are applied before the batched API calls.
+    Load and return the transformation functions in the order they should be applied.
     """
     return [
         t01.transform,  # Add teacher ID
@@ -32,7 +32,8 @@ def load_base_transformations():
         t10.transform,  # Add LinkedIn profile URL
         t12.transform,  # Add created_at timestamp
         t16.transform,  # Add Email column
-        t17.transform   # Add source_id column
+        t17.transform,  # Add source_id column
+        t50.transform   # Calculate profile completion percentage (must be last)
     ]
 
 def process_file(input_file, output_file, batch_size=5, continue_from_existing=True):

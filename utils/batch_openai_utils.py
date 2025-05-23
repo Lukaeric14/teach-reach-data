@@ -37,21 +37,7 @@ def validate_teacher_status(teacher_data: Dict[str, Any], result: Dict[str, Any]
     Returns:
         Updated result with validated is_currently_teacher flag
     """
-    # If the flag is already False, no need to check further
-    if not result.get('is_currently_teacher', True):
-        return result
-    
-    # Check for non-teaching roles in headline or current position
-    non_teaching_roles = [
-        'administrator', 'principal', 'director', 'counselor', 'coordinator', 
-        'hr', 'recruiter', 'manager', 'consultant', 'therapist', 'trainer',
-        'medical', 'doctor', 'nurse', 'technician', 'analyst', 'specialist',
-        'officer', 'assistant', 'intern', 'fellow', 'researcher', 'scientist',
-        'physiotherapist', 'yoga', 'pilates', 'director', 'head of', 'cfo', 'ceo',
-        'founder', 'coach', 'mentor', 'adviser', 'consultant', 'expert',
-        'officer', 'executive', 'president', 'vice president', 'vp', 'cmo', 'cto'
-    ]
-    
+    # If the flag is already False, we might still need to check for teaching roles
     current_role = ''
     if isinstance(teacher_data, dict):
         current_role = ' '.join([
@@ -60,8 +46,36 @@ def validate_teacher_status(teacher_data: Dict[str, Any], result: Dict[str, Any]
             str(teacher_data.get('title', ''))
         ]).lower()
     
-    # If any non-teaching role is found, set flag to False
-    if any(role in current_role for role in non_teaching_roles):
+    # First, check for teaching roles that should be flagged as True
+    teaching_indicators = [
+        'teacher', 'instructor', 'professor', 'lecturer', 'educator',
+        'faculty', 'tutor', 'teacher assistant', 'teaching assistant', 'ta'
+    ]
+    
+    # Check for "Head of [Subject]" pattern which should be considered a teaching role
+    if re.search(r'head of (?:the )?(?:department of )?\w+', current_role):
+        result['is_currently_teacher'] = True
+        return result
+        
+    # If we already have a True flag and no reason to change it, return early
+    if result.get('is_currently_teacher', False) and \
+       any(indicator in current_role for indicator in teaching_indicators):
+        return result
+    
+    # Check for non-teaching roles
+    non_teaching_roles = [
+        'administrator', 'principal', 'director', 'counselor', 'coordinator', 
+        'hr', 'recruiter', 'manager', 'consultant', 'therapist', 'trainer',
+        'medical', 'doctor', 'nurse', 'technician', 'analyst', 'specialist',
+        'officer', 'assistant', 'intern', 'fellow', 'researcher', 'scientist',
+        'physiotherapist', 'yoga', 'pilates', 'cfo', 'ceo', 'founder', 
+        'coach', 'mentor', 'adviser', 'consultant', 'expert', 'officer', 
+        'executive', 'president', 'vice president', 'vp', 'cmo', 'cto'
+    ]
+    
+    # If any non-teaching role is found and no teaching indicators are present, set flag to False
+    if any(role in current_role for role in non_teaching_roles) and \
+       not any(indicator in current_role for indicator in teaching_indicators):
         result['is_currently_teacher'] = False
     
     return result

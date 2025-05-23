@@ -328,7 +328,6 @@ def infer_curriculum_experience(teacher_data: Dict[str, Any]) -> str:
     - Indian
     - UAE
     - French
-    - Australian
     - Not specified
     
     Respond with ONLY the curriculum name from the options above:"""
@@ -393,6 +392,8 @@ def infer_nationality_from_name(name: str) -> str:
     1. Respond with ONLY the country name in English (e.g., "Egyptian", "Indian", "British")
     2. If uncertain, respond with "Not specified"
     3. Use demonyms (e.g., "Egyptian" not "Egypt", "American" not "United States")
+    4. NOTE: Emirati nationality is quite rare, most arab names are from Egypt, Lebanon, Palestine, Jordan.
+    5. If the name is arab but you cannt infer a specific country, respond with fallback "Middle Eastern" (this should be rare). 
     
     Name: {name}
     

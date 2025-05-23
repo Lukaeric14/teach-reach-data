@@ -26,6 +26,46 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Load school curriculum mapping
 SCHOOL_CURRICULUM_MAPPING = load_school_curriculum_mapping()
 
+def validate_teacher_status(teacher_data: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validates and corrects the is_currently_teacher flag based on role keywords.
+    
+    Args:
+        teacher_data: Original teacher data
+        result: Current result with is_currently_teacher flag
+        
+    Returns:
+        Updated result with validated is_currently_teacher flag
+    """
+    # If the flag is already False, no need to check further
+    if not result.get('is_currently_teacher', True):
+        return result
+    
+    # Check for non-teaching roles in headline or current position
+    non_teaching_roles = [
+        'administrator', 'principal', 'director', 'counselor', 'coordinator', 
+        'hr', 'recruiter', 'manager', 'consultant', 'therapist', 'trainer',
+        'medical', 'doctor', 'nurse', 'technician', 'analyst', 'specialist',
+        'officer', 'assistant', 'intern', 'fellow', 'researcher', 'scientist',
+        'physiotherapist', 'yoga', 'pilates', 'director', 'head of', 'cfo', 'ceo',
+        'founder', 'coach', 'mentor', 'adviser', 'consultant', 'expert',
+        'officer', 'executive', 'president', 'vice president', 'vp', 'cmo', 'cto'
+    ]
+    
+    current_role = ''
+    if isinstance(teacher_data, dict):
+        current_role = ' '.join([
+            str(teacher_data.get('headline', '')),
+            str(teacher_data.get('current_position', '')),
+            str(teacher_data.get('title', ''))
+        ]).lower()
+    
+    # If any non-teaching role is found, set flag to False
+    if any(role in current_role for role in non_teaching_roles):
+        result['is_currently_teacher'] = False
+    
+    return result
+
 def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Get subject, bio, nationality, and preferred grade level in a single API call.
@@ -48,7 +88,10 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     2. Bio: A professional, anonymized 2-3 sentence bio. Remove all personally identifiable information.
     3. Nationality: Most likely nationality based on their name (use demonym form, e.g., "Egyptian" not "Egypt")
     4. Preferred Grade Level: Elementary, Middle School, High School, or Early Childhood
-    5. Is Currently Teaching: TRUE if they are currently a teacher (employed or unemployed), FALSE if they hold another position (coordinator, HR, etc.)
+    5. Is Currently Teaching: 
+       - Set to TRUE ONLY if their current/most recent role is a teaching position (e.g., Teacher, Instructor, Professor, Lecturer, etc.)
+       - Set to FALSE if they are in non-teaching roles like: Administrator, Principal, Director, Counselor, Coordinator, HR, Recruiter, etc.
+       - If uncertain, default to FALSE
     
     Teacher Information:
     {teacher_info}
@@ -70,26 +113,31 @@ def batch_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         response = client.chat.completions.create(
             model=config["model"],
             messages=[
-                {"role": "system", "content": "You are an expert in education who creates structured data about teachers."},
+                {"role": "system", "content": "You are an expert in education who creates structured data about teachers. Be very strict about who qualifies as a teacher."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=config["max_tokens"],
-            temperature=config["temperature"],
+            temperature=0.2,  # Lower temperature for more consistent results
             response_format=config.get("response_format", None)
         )
         
-        # Parse the JSON response
+        # Parse the JSON response and validate
         result = json.loads(response.choices[0].message.content)
+        
+        # Apply additional validation
+        result = validate_teacher_status(teacher_data, result)
+        
         return result
         
     except Exception as e:
         print(f"Error processing teacher profile: {str(e)}")
+        # Default to False on error to avoid false positives
         return {
             "subject": "Unknown", 
             "bio": "Professional educator with teaching experience.", 
             "nationality": "Not specified",
             "preferred_grade_level": "Not specified",
-            "is_currently_teacher": True
+            "is_currently_teacher": False
         }
 
 def batch_curriculum_and_school(teacher_data: Dict[str, Any]) -> Dict[str, Any]:

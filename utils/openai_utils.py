@@ -45,6 +45,36 @@ def enrich_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     
+    # Pre-process teacher_data to remove empty employment history sections
+    if isinstance(teacher_data, dict):
+        # Identify all unique employment history indices
+        eh_indices = set()
+        for key in teacher_data.keys():
+            if key.startswith('employment_history/'):
+                try:
+                    eh_indices.add(int(key.split('/')[1]))
+                except (IndexError, ValueError):
+                    continue # malformed key
+
+        keys_to_remove = []
+        for idx in sorted(list(eh_indices)):
+            entry_keys = [k for k in teacher_data.keys() if k.startswith(f'employment_history/{idx}/')]
+            # Check if all values for this entry are empty or whitespace
+            all_empty = True
+            for k in entry_keys:
+                value = str(teacher_data.get(k, '')).strip()
+                if value and value.lower() not in ['none', 'n/a', 'not specified', 'false', '0']:
+                    all_empty = False
+                    break
+            
+            if all_empty:
+                keys_to_remove.extend(entry_keys)
+        
+        # Remove the identified empty employment history keys
+        for key_to_remove in keys_to_remove:
+            if key_to_remove in teacher_data:
+                del teacher_data[key_to_remove]
+
     # Convert dict to formatted string if needed
     teacher_info = json.dumps(teacher_data, indent=2) if isinstance(teacher_data, dict) else str(teacher_data)
     
@@ -87,73 +117,69 @@ def enrich_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         employment_summary += f"- {job['organization']}: {job['title']} ({'Current' if job['current'] else job['start_date'] + ' to ' + (job['end_date'] if job['end_date'] else 'Present')})\n"
     
     prompt = f"""Based on the following comprehensive teacher information, provide a detailed profile enrichment with ALL of the following fields.
-    
+
     Teacher Information:
     {teacher_info}
     {employment_summary if employment_history else ''}
-    
-    NOTE: All of these fields are REQUIRED and must be provided with high accuracy!
-    
-    1. Subject: Be very specific about the subject they teach. For example:
-       - Instead of "English", use "English Literature" or "English as a Second Language (ESL)"
-       - Instead of "Math", use "Mathematics", "Calculus", or "Statistics"
-       - Instead of "Science", use "Physics", "Chemistry", "Biology", etc.
-       - For primary/elementary teachers that don't have a specific subject, use "Primary Education" or "Elementary Education"
-       - Only use "Education" as a last resort if when no specific subject can be determined.
-    
-    2. Bio: A professional, anonymized 2-3 sentence bio. Remove all personally identifiable information.
-    
-    3. Nationality: Most likely nationality based on their name, work history, and location (use demonym form, e.g., "Egyptian" not "Egypt"). If uncertain, provide best estimate.
-    
-    4. Preferred Grade Level: Choose one of these exact values:
-       - Early Childhood (Ages 0-5)
-       - Elementary (Ages 6-10, Grades 1-5)
-       - Middle School (Ages 11-13, Grades 6-8)
-       - High School (Ages 14-18, Grades 9-12)
-       - University/College
-       - Adult Education
-    
-    5. Is Currently Teaching: 
-       - Set to TRUE ONLY if their current/most recent role is a teaching position (e.g., Teacher, Instructor, Professor, Lecturer, etc.)
-       - Set to FALSE if they are in non-teaching roles like: Administrator, Principal, Director, Counselor, Coordinator, HR, Recruiter, etc.
-       - If uncertain, default to FALSE
-       
-    6. Curriculum Experience: Based on their schools, nationality and experience, choose from:
-       - British
-       - American
-       - IB (International Baccalaureate)
-       - Indian
-       - UAE
-       - Australian
-       - Cambridge
-       - French
-       - Not specified (only if truly cannot determine)
-       
-    7. Teaching Experience Years: Estimate the total years of teaching experience based on their history. 
-       Provide a numeric value. If uncertain, estimate based on career length.
-       
-    8. Current School: Name of their current or most recent school/educational institution.
-       
-    9. School Website: The website of their current school if available. 
-       If not available in the data, respond with an empty string.
-       
-    10. Current Location Country: The country where they currently work or live.
-        
-    11. Current Location City: The city where they currently work or live.
-    
-    Format your response as JSON with all fields included:
-    {{
-        "subject": "...",
-        "bio": "...",
-        "nationality": "...",
-        "preferred_grade_level": "...",
-        "is_currently_teacher": boolean,
-        "curriculum_experience": "...",
-        "teaching_experience_years": number,
-        "current_school": "...",
-        "school_website": "...",
-        "current_location_country": "...",
-        "current_location_city": "..."
+
+    RESPONSE FORMATTING RULES:
+    - Respond with a single JSON object.
+    - For 'subject', 'nationality', 'preferred_grade_level', 'is_currently_teacher', and 'curriculum_experience', provide an object with three keys: 'value', 'confidence' (High/Medium/Low), and 'reasoning' (a brief explanation).
+    - For all other fields ('bio', 'teaching_experience_years', 'current_school', 'school_website', 'current_location_country', 'current_location_city'), provide the direct value.
+
+    DETAILED FIELD REQUIREMENTS:
+
+    1.  **subject**:
+        -   **value**: Specific subject taught (e.g., "English Literature", "Mathematics", "Primary Education").
+        -   **confidence**: Your confidence in this inference (High/Medium/Low).
+        -   **reasoning**: Brief reason for your choice.
+        -   Examples: Instead of "English", use "English Literature" or "English as a Second Language (ESL)". Instead of "Math", use "Mathematics", "Calculus", or "Statistics". For primary/elementary, use "Primary Education" or "Elementary Education". Use "Education" only as a last resort.
+
+    2.  **bio**: (string) A professional, anonymized 2-3 sentence bio. Remove PII.
+
+    3.  **nationality**:
+        -   **value**: Your best inference of the most likely nationality (demonym form, e.g., "Egyptian" not "Egypt"). ALWAYS provide your best guess even if confidence is low. Do NOT use "Not specified" unless no reasonable inference can be made from any available information.
+        -   **confidence**: Your confidence in this inference (High/Medium/Low).
+        -   **reasoning**: Brief reason for your choice (e.g., "Based on name and work history in Cairo", or "Inferred solely from name due to lack of other indicators").
+
+    4.  **preferred_grade_level**:
+        -   **value**: Choose one: "Early Childhood (Ages 0-5)", "Elementary (Ages 6-10, Grades 1-5)", "Middle School (Ages 11-13, Grades 6-8)", "High School (Ages 14-18, Grades 9-12)", "University/College", "Adult Education".
+        -   **confidence**: Your confidence (High/Medium/Low).
+        -   **reasoning**: Brief reason.
+
+    5.  **is_currently_teacher**:
+        -   **value**: (boolean) TRUE if current/most recent role is teaching (Teacher, Instructor, Professor, Lecturer). FALSE for non-teaching roles (Administrator, Principal, etc.). Default to FALSE if uncertain.
+        -   **confidence**: Your confidence (High/Medium/Low).
+        -   **reasoning**: Brief reason.
+
+    6.  **curriculum_experience**:
+        -   **value**: Choose from: "British", "American", "IB (International Baccalaureate)", "Indian", "UAE", "Australian", "Cambridge", "French", "Not specified" (only if truly cannot determine).
+        -   **confidence**: Your confidence (High/Medium/Low).
+        -   **reasoning**: Brief reason (e.g., "Worked at GEMS school known for British curriculum").
+
+    7.  **teaching_experience_years**: (number) Estimated total years of teaching. Numeric value. Estimate from career length if uncertain.
+
+    8.  **current_school**: (string) Name of current or most recent school/educational institution.
+
+    9.  **school_website**: (string) Website of current school. Empty string if not available/found.
+
+    10. **current_location_country**: (string) Country where they currently work or live.
+
+    11. **current_location_city**: (string) City where they currently work or live.
+
+    EXAMPLE JSON STRUCTURE:
+    {{ 
+        "subject": {{"value": "Mathematics", "confidence": "High", "reasoning": "Multiple roles as Math Teacher."}},
+        "bio": "A dedicated educator...",
+        "nationality": {{"value": "British", "confidence": "Medium", "reasoning": "Common British name, worked in UK."}},
+        "preferred_grade_level": {{"value": "High School (Ages 14-18, Grades 9-12)", "confidence": "High", "reasoning": "Experience aligns with high school."}},
+        "is_currently_teacher": {{"value": true, "confidence": "High", "reasoning": "Current role is 'Teacher'."}},
+        "curriculum_experience": {{"value": "British", "confidence": "High", "reasoning": "Taught at schools with British curriculum."}},
+        "teaching_experience_years": 10,
+        "current_school": "Global Academy",
+        "school_website": "https://globalacademy.sch",
+        "current_location_country": "United Arab Emirates",
+        "current_location_city": "Dubai"
     }}
     """
     
@@ -173,10 +199,26 @@ def enrich_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
         )
         
         # Parse the JSON response
-        result = json.loads(response.choices[0].message.content)
+        raw_result = json.loads(response.choices[0].message.content)
+    
+        # Flatten structured fields (value, confidence, reasoning)
+        flattened_result = {}
+        structured_fields = ["subject", "nationality", "preferred_grade_level", "is_currently_teacher", "curriculum_experience"]
         
-        # Apply validations and fixes
-        result = validate_teacher_profile(teacher_data, result)
+        for key, value in raw_result.items():
+            if key in structured_fields and isinstance(value, dict):
+                flattened_result[f"{key}_value"] = value.get("value")
+                flattened_result[f"{key}_confidence"] = value.get("confidence")
+                flattened_result[f"{key}_reasoning"] = value.get("reasoning")
+            else:
+                flattened_result[key] = value # For non-structured fields like bio, teaching_experience_years etc.
+                
+        # Validate the flattened data, passing original teacher_data for context
+        result = validate_teacher_profile(teacher_data, flattened_result)
+        return result
+                
+        # Validate the flattened data, passing original teacher_data for context
+        result = validate_teacher_profile(teacher_data, flattened_result)
         
         return result
         
@@ -209,43 +251,58 @@ def validate_teacher_profile(teacher_data: Dict[str, Any], result: Dict[str, Any
     Returns:
         Dict with validated and fixed data
     """
-    # Ensure all fields exist
-    required_fields = [
-        "subject", "bio", "nationality", "preferred_grade_level", 
-        "is_currently_teacher", "curriculum_experience", "teaching_experience_years",
-        "current_school", "school_website", "current_location_country", "current_location_city"
-    ]
-    
-    for field in required_fields:
-        if field not in result or result[field] is None:
+    structured_field_bases = ["subject", "nationality", "preferred_grade_level", "is_currently_teacher", "curriculum_experience"]
+    simple_fields = ["bio", "teaching_experience_years", "current_school", "school_website", "current_location_country", "current_location_city"]
+
+    # Set defaults for structured fields
+    for base_field in structured_field_bases:
+        value_key = f"{base_field}_value"
+        confidence_key = f"{base_field}_confidence"
+        reasoning_key = f"{base_field}_reasoning"
+
+        if result.get(value_key) is None:
+            if base_field == "is_currently_teacher":
+                result[value_key] = False
+            else:
+                result[value_key] = "Not specified"
+        
+        if result.get(confidence_key) is None:
+            result[confidence_key] = "Low"
+        
+        if result.get(reasoning_key) is None:
+            result[reasoning_key] = "Not specified by API"
+
+    # Set defaults for simple fields
+    for field in simple_fields:
+        if result.get(field) is None:
             if field == "teaching_experience_years":
                 result[field] = 0
-            elif field == "is_currently_teacher":
-                result[field] = False
             else:
                 result[field] = ""
-                
-    # Convert teaching_experience_years to float
+
+    # Type conversion for teaching_experience_years (simple field)
     try:
-        result["teaching_experience_years"] = float(result["teaching_experience_years"])
+        result["teaching_experience_years"] = float(result.get("teaching_experience_years", 0))
     except (ValueError, TypeError):
         result["teaching_experience_years"] = 0.0
-        
-    # Convert is_currently_teacher to bool if it's not already
-    if isinstance(result["is_currently_teacher"], str):
-        result["is_currently_teacher"] = result["is_currently_teacher"].lower() in ["true", "yes", "1"]
-        
-    # Fix nationality if it's missing or unknown
-    if not result["nationality"] or result["nationality"].lower() in ["unknown", "not specified", "unspecified"]:
-        name = teacher_data.get("name", "")
-        if name:
-            try:
-                result["nationality"] = infer_nationality_from_name(name)
-            except Exception as e:
-                print(f"Error inferring nationality: {str(e)}")
-                
+
+    # Type conversion for is_currently_teacher_value (structured field part)
+    ict_value_key = "is_currently_teacher_value"
+    if isinstance(result.get(ict_value_key), str):
+        result[ict_value_key] = result[ict_value_key].lower() in ["true", "yes", "1"]
+    elif result.get(ict_value_key) is None: # Should be caught by default setter, but as a safeguard
+        result[ict_value_key] = False
+
+    # Fix nationality if it's missing or unknown (operates on _value part)
+    nat_value_key = "nationality_value"
+    nat_conf_key = "nationality_confidence"
+    nat_reas_key = "nationality_reasoning"
+    current_nat_value = result.get(nat_value_key, "").strip()
+
+
+
     # Fix school website if provided
-    if result["school_website"] and not result["school_website"].startswith(('http://', 'https://')):
+    if result.get("school_website") and not result["school_website"].startswith(('http://', 'https://')):
         result["school_website"] = 'https://' + result["school_website"]
                 
     return result

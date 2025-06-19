@@ -85,10 +85,10 @@ def process_file(input_file, output_file, batch_size=20, continue_from_existing=
         except Exception as e:
             print(f"Error reading existing output file: {e}. Starting fresh.")
     
-    # If we're not continuing from an existing file, save the base transformations
+    # If we're not continuing from an existing file, the process_teachers_individually
+    # function will create the file and write the header on the first pass.
     if start_idx == 0:
-        print(f"Saving base transformations to: {output_file}")
-        df.to_csv(output_file, index=False)
+        print("Starting a fresh processing run. The output file will be created by the processing loop.")
     
     # Process teachers individually 
     print(f"Processing {total_teachers - start_idx} teachers individually...")
@@ -120,48 +120,69 @@ def process_teachers_individually(df, input_df, output_file, calculate_completio
     
     # Initialize progress tracking
     processed_count = 0
-    
-    # Process teachers one by one starting from start_idx
-    for teacher_idx in range(start_idx, total_teachers):
+    total_to_process = len(df) - start_idx
+    master_columns = None
+
+    # If continuing, read the header from the existing file to ensure consistency
+    if start_idx > 0 and os.path.exists(output_file):
+        try:
+            master_columns = pd.read_csv(output_file, nrows=0).columns.tolist()
+            print(f"Continuing with master columns: {master_columns}")
+        except Exception as e:
+            print(f"Warning: Could not read columns from existing file. Will establish from first new record. Error: {e}")
+
+    for teacher_idx in range(start_idx, len(df)):
         teacher_start_time = time.time()
-        teacher_df_slice = df.iloc[[teacher_idx]].copy() 
-        teacher_name = teacher_df_slice.at[teacher_df_slice.index[0], 'name'] if 'name' in teacher_df_slice.columns else f"Teacher #{teacher_idx+1}"
+        teacher_df_slice = df.iloc[teacher_idx:teacher_idx+1].copy()
+        teacher_name = teacher_df_slice.at[teacher_df_slice.index[0], 'name']
         
         print(f"\nProcessing teacher {teacher_idx + 1} of {total_teachers}: {teacher_name}")
         
         try:
-            # Convert row to dict and ensure all values are strings
-            teacher_dict = {k: str(v) if v is not None else '' for k, v in teacher_df_slice.iloc[0].to_dict().items()}
+            original_teacher_row = input_df.iloc[teacher_idx]
+            original_teacher_dict = {k: str(v) if pd.notna(v) else '' for k, v in original_teacher_row.to_dict().items()}
             
-            # Make a single comprehensive API call for this teacher
-            print(f"  Calling enrich_teacher_profile for {teacher_name}...")
-            enriched_data = enrich_teacher_profile(teacher_dict)
+            print(f"  Calling enrich_teacher_profile for {teacher_name} with original data...")
+            enriched_data = enrich_teacher_profile(original_teacher_dict)
             print(f"  Received comprehensive profile data")
             
-            # Update the teacher row (teacher_df_slice) with the enriched data
             for key, value in enriched_data.items():
                 if pd.notna(value) and str(value).strip():
                     teacher_df_slice.at[teacher_df_slice.index[0], key] = value
             
-            # Calculate profile completion for this teacher if requested
             if calculate_completion:
-                teacher_df_slice = t50.transform(teacher_df_slice, input_df) 
-            
+                teacher_df_slice = t50.transform(teacher_df_slice, input_df)
+
+            # --- Column Consistency Logic ---
+            if master_columns is None:
+                master_columns = teacher_df_slice.columns.tolist()
+                print(f"Master column order established: {master_columns}")
+                # Write this first record with a header
+                teacher_df_slice.to_csv(output_file, mode='a', header=True, index=False)
+            else:
+                # Reindex to match the master column order and write without header
+                teacher_df_slice = teacher_df_slice.reindex(columns=master_columns)
+                teacher_df_slice.to_csv(output_file, mode='a', header=False, index=False)
+            # --- End Column Consistency Logic ---
+
             # Debug: Print what we're about to save for this row
             print(f"\nData for {teacher_name} after enrichment and completion:")
-            for col in ['subject', 'bio', 'nationality', 'preferred_grade_level', 
-                       'is_currently_teacher', 'curriculum_experience', 
-                       'teaching_experience_years', 'current_school', 'school_website', 
-                       'current_location_country', 'current_location_city', 'profile_completion_percentage']:
-                if col in teacher_df_slice.columns:
+            debug_cols = [
+                'subject_value', 'subject_confidence', 'subject_reasoning',
+                'nationality_value', 'nationality_confidence', 'nationality_reasoning',
+                'preferred_grade_level_value', 'preferred_grade_level_confidence', 'preferred_grade_level_reasoning',
+                'is_currently_teacher_value', 'is_currently_teacher_confidence', 'is_currently_teacher_reasoning',
+                'curriculum_experience_value', 'curriculum_experience_confidence', 'curriculum_experience_reasoning',
+                'bio', 'teaching_experience_years', 
+                'current_school', 'school_website', 
+                'current_location_country', 'current_location_city', 'profile_completion_percentage'
+            ]
+            for col in debug_cols:
+                if col in teacher_df_slice.columns and col in master_columns:
                     print(f"  {col}: {teacher_df_slice.at[teacher_df_slice.index[0], col]}")
+                else:
+                    print(f"  {col}: Not present in slice or master columns")
             
-            # Save this teacher's data
-            write_header = not os.path.exists(output_file) or (os.path.exists(output_file) and os.path.getsize(output_file) == 0) or (teacher_idx == start_idx)
-            
-            teacher_df_slice.to_csv(output_file, mode='a' if not write_header else 'w', header=write_header, index=False)
-            
-            # Report progress for this teacher
             processed_count += 1
             teacher_end_time = time.time()
             print(f"Teacher processed and saved in {teacher_end_time - teacher_start_time:.2f} seconds")
@@ -309,7 +330,7 @@ if __name__ == "__main__":
     
     # Set default output filename if not provided
     if not args.output:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
         args.output = os.path.join(output_dir, f"processed_teachers_{timestamp}.csv")
     
     # First list available models

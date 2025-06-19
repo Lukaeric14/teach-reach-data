@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import re
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -17,6 +19,236 @@ load_dotenv()
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def enrich_teacher_profile(teacher_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Comprehensive function to enrich a teacher profile with all required fields using a single API call.
+    
+    Args:
+        teacher_data (dict): Dictionary containing teacher information
+    
+    Returns:
+        dict: Dictionary with all enriched fields including:
+              - subject: The main subject taught
+              - bio: Professional anonymized bio
+              - nationality: Inferred nationality
+              - preferred_grade_level: Preferred teaching grade level
+              - is_currently_teacher: Whether they are currently a teacher
+              - curriculum_experience: Curriculum experience
+              - teaching_experience_years: Years of teaching experience
+              - current_school: Current or most recent school
+              - school_website: School website if available
+              - current_location_country: Current country location
+              - current_location_city: Current city location
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+    
+    # Convert dict to formatted string if needed
+    teacher_info = json.dumps(teacher_data, indent=2) if isinstance(teacher_data, dict) else str(teacher_data)
+    
+    # Extract employment history for better analysis
+    employment_history = []
+    i = 0
+    while isinstance(teacher_data, dict) and True:
+        org_key = f'employment_history/{i}/organization_name'
+        if org_key not in teacher_data:
+            break
+            
+        # Get employment entry
+        entry = {
+            'organization': str(teacher_data.get(org_key, '')).strip(),
+            'title': str(teacher_data.get(f'employment_history/{i}/title', '')).strip(),
+            'current': bool(teacher_data.get(f'employment_history/{i}/current', False)),
+            'start_date': str(teacher_data.get(f'employment_history/{i}/start_date', '')).strip(),
+            'end_date': str(teacher_data.get(f'employment_history/{i}/end_date', '')).strip()
+        }
+        
+        # Only add if we have an organization name
+        if entry['organization'] and entry['organization'].lower() not in ['none', 'n/a', 'not specified']:
+            employment_history.append(entry)
+        
+        i += 1
+        
+    # Sort by current status (current first) and then by start_date (most recent first)
+    if employment_history:
+        employment_history.sort(
+            key=lambda x: (
+                not x['current'],  # Current jobs first
+                x['start_date'] if x['start_date'] else '1900-01-01'  # Then by start date
+            ),
+            reverse=True  # Most recent first
+        )
+        
+    # Add employment history to the prompt for better context
+    employment_summary = "\n\nEmployment History:\n"
+    for job in employment_history[:5]:  # Limit to top 5 jobs
+        employment_summary += f"- {job['organization']}: {job['title']} ({'Current' if job['current'] else job['start_date'] + ' to ' + (job['end_date'] if job['end_date'] else 'Present')})\n"
+    
+    prompt = f"""Based on the following comprehensive teacher information, provide a detailed profile enrichment with ALL of the following fields.
+    
+    Teacher Information:
+    {teacher_info}
+    {employment_summary if employment_history else ''}
+    
+    NOTE: All of these fields are REQUIRED and must be provided with high accuracy!
+    
+    1. Subject: Be very specific about the subject they teach. For example:
+       - Instead of "English", use "English Literature" or "English as a Second Language (ESL)"
+       - Instead of "Math", use "Mathematics", "Calculus", or "Statistics"
+       - Instead of "Science", use "Physics", "Chemistry", "Biology", etc.
+       - For primary/elementary teachers that don't have a specific subject, use "Primary Education" or "Elementary Education"
+       - Only use "Education" as a last resort if when no specific subject can be determined.
+    
+    2. Bio: A professional, anonymized 2-3 sentence bio. Remove all personally identifiable information.
+    
+    3. Nationality: Most likely nationality based on their name, work history, and location (use demonym form, e.g., "Egyptian" not "Egypt"). If uncertain, provide best estimate.
+    
+    4. Preferred Grade Level: Choose one of these exact values:
+       - Early Childhood (Ages 0-5)
+       - Elementary (Ages 6-10, Grades 1-5)
+       - Middle School (Ages 11-13, Grades 6-8)
+       - High School (Ages 14-18, Grades 9-12)
+       - University/College
+       - Adult Education
+    
+    5. Is Currently Teaching: 
+       - Set to TRUE ONLY if their current/most recent role is a teaching position (e.g., Teacher, Instructor, Professor, Lecturer, etc.)
+       - Set to FALSE if they are in non-teaching roles like: Administrator, Principal, Director, Counselor, Coordinator, HR, Recruiter, etc.
+       - If uncertain, default to FALSE
+       
+    6. Curriculum Experience: Based on their schools, nationality and experience, choose from:
+       - British
+       - American
+       - IB (International Baccalaureate)
+       - Indian
+       - UAE
+       - Australian
+       - Cambridge
+       - French
+       - Not specified (only if truly cannot determine)
+       
+    7. Teaching Experience Years: Estimate the total years of teaching experience based on their history. 
+       Provide a numeric value. If uncertain, estimate based on career length.
+       
+    8. Current School: Name of their current or most recent school/educational institution.
+       
+    9. School Website: The website of their current school if available. 
+       If not available in the data, respond with an empty string.
+       
+    10. Current Location Country: The country where they currently work or live.
+        
+    11. Current Location City: The city where they currently work or live.
+    
+    Format your response as JSON with all fields included:
+    {{
+        "subject": "...",
+        "bio": "...",
+        "nationality": "...",
+        "preferred_grade_level": "...",
+        "is_currently_teacher": boolean,
+        "curriculum_experience": "...",
+        "teaching_experience_years": number,
+        "current_school": "...",
+        "school_website": "...",
+        "current_location_country": "...",
+        "current_location_city": "..."
+    }}
+    """
+    
+    try:
+        # Get model configuration
+        config = get_model_config("teacher_profile")
+        
+        response = client.chat.completions.create(
+            model=config["model"],
+            messages=[
+                {"role": "system", "content": "You are an expert in education who creates comprehensive structured data about teachers. Extract and infer all required information accurately based on the given data."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1500,  # Increased for comprehensive response
+            temperature=0.2,  # Lower temperature for more consistent results
+            response_format={"type": "json_object"}
+        )
+        
+        # Parse the JSON response
+        result = json.loads(response.choices[0].message.content)
+        
+        # Apply validations and fixes
+        result = validate_teacher_profile(teacher_data, result)
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error enriching teacher profile: {str(e)}")
+        # Return default values on error
+        return {
+            "subject": "Unknown", 
+            "bio": "Professional educator with teaching experience.", 
+            "nationality": "Unknown",
+            "preferred_grade_level": "Not specified",
+            "is_currently_teacher": False,
+            "curriculum_experience": "Not specified",
+            "teaching_experience_years": 0,
+            "current_school": "",
+            "school_website": "",
+            "current_location_country": "",
+            "current_location_city": ""
+        }
+
+
+def validate_teacher_profile(teacher_data: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and fix the teacher profile data returned from the API.
+    
+    Args:
+        teacher_data: Original teacher data
+        result: The enriched profile from the API
+        
+    Returns:
+        Dict with validated and fixed data
+    """
+    # Ensure all fields exist
+    required_fields = [
+        "subject", "bio", "nationality", "preferred_grade_level", 
+        "is_currently_teacher", "curriculum_experience", "teaching_experience_years",
+        "current_school", "school_website", "current_location_country", "current_location_city"
+    ]
+    
+    for field in required_fields:
+        if field not in result or result[field] is None:
+            if field == "teaching_experience_years":
+                result[field] = 0
+            elif field == "is_currently_teacher":
+                result[field] = False
+            else:
+                result[field] = ""
+                
+    # Convert teaching_experience_years to float
+    try:
+        result["teaching_experience_years"] = float(result["teaching_experience_years"])
+    except (ValueError, TypeError):
+        result["teaching_experience_years"] = 0.0
+        
+    # Convert is_currently_teacher to bool if it's not already
+    if isinstance(result["is_currently_teacher"], str):
+        result["is_currently_teacher"] = result["is_currently_teacher"].lower() in ["true", "yes", "1"]
+        
+    # Fix nationality if it's missing or unknown
+    if not result["nationality"] or result["nationality"].lower() in ["unknown", "not specified", "unspecified"]:
+        name = teacher_data.get("name", "")
+        if name:
+            try:
+                result["nationality"] = infer_nationality_from_name(name)
+            except Exception as e:
+                print(f"Error inferring nationality: {str(e)}")
+                
+    # Fix school website if provided
+    if result["school_website"] and not result["school_website"].startswith(('http://', 'https://')):
+        result["school_website"] = 'https://' + result["school_website"]
+                
+    return result
 
 def infer_teacher_subject(teacher_data: Dict[str, Any]) -> str:
     """

@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from typing import Dict, Any, List
 import datetime
 
-# Import our new batched utilities
-from utils.batch_openai_utils import batch_teacher_profile, batch_curriculum_and_school
+# Import our utilities
+from utils.openai_utils import enrich_teacher_profile
 
 # Import only essential transformations that don't require OpenAI API calls
 from transformations import t_01_add_teacher_id as t01
@@ -36,14 +36,14 @@ def load_base_transformations():
         t50.transform   # Calculate profile completion percentage (must be last)
     ]
 
-def process_file(input_file, output_file, batch_size=5, continue_from_existing=True):
+def process_file(input_file, output_file, batch_size=20, continue_from_existing=True):
     """
     Processes the input file through transformations in batches and saves the result.
     
     Args:
         input_file (str): Path to the input CSV file
         output_file (str): Path where the output CSV file will be saved
-        batch_size (int): Number of teachers to process in each batch
+        batch_size (int): Number of teachers to process in total (not per batch)
         continue_from_existing (bool): Whether to continue from an existing output file
     """
     # Read the input CSV
@@ -51,20 +51,11 @@ def process_file(input_file, output_file, batch_size=5, continue_from_existing=T
     input_df = pd.read_csv(input_file)
     total_teachers = len(input_df)
     
-    # Check if we should continue from an existing file
-    if os.path.exists(output_file) and continue_from_existing:
-        try:
-            existing_df = pd.read_csv(output_file)
-            if len(existing_df) == total_teachers:
-                print(f"Output file already contains {total_teachers} records. Using it as the base.")
-                df = existing_df
-                # Skip batched processing and go to final transformations
-                apply_final_transformations(df, input_df, output_file)
-                return
-            elif len(existing_df) > 0:
-                print(f"Output file contains {len(existing_df)} partial records. Starting a new one.")
-        except Exception as e:
-            print(f"Error reading existing output file: {e}. Starting fresh.")
+    # Limit the number of teachers to process to batch_size
+    if batch_size < total_teachers:
+        print(f"Limiting processing to first {batch_size} teachers (out of {total_teachers})")
+        input_df = input_df.head(batch_size)
+        total_teachers = len(input_df)
     
     # Initialize with a fresh dataframe for base transformations
     df = pd.DataFrame()
@@ -76,115 +67,158 @@ def process_file(input_file, output_file, batch_size=5, continue_from_existing=T
         print(f"  Base transformation {i}: {transform_func.__name__}")
         df = transform_func(df, input_df)
     
-    # Save intermediate result
-    print(f"Saving base transformations to: {output_file}")
-    df.to_csv(output_file, index=False)
+    # Check if we should continue from an existing file
+    start_idx = 0
+    if os.path.exists(output_file) and continue_from_existing:
+        try:
+            existing_df = pd.read_csv(output_file)
+            if len(existing_df) >= total_teachers:
+                print(f"Output file already contains {len(existing_df)} records. Using it as the base.")
+                # Skip processing and go to final transformations
+                apply_final_transformations(existing_df.head(total_teachers), input_df, output_file)
+                return
+            elif len(existing_df) > 0:
+                print(f"Output file contains {len(existing_df)} partial records. Resuming from record {len(existing_df) + 1}.")
+                start_idx = len(existing_df)
+                # Load the existing data to continue from where we left off
+                df = existing_df
+        except Exception as e:
+            print(f"Error reading existing output file: {e}. Starting fresh.")
     
-    # Process teachers in batches
-    process_in_batches(df, input_df, output_file, batch_size)
+    # If we're not continuing from an existing file, save the base transformations
+    if start_idx == 0:
+        print(f"Saving base transformations to: {output_file}")
+        df.to_csv(output_file, index=False)
+    
+    # Process teachers individually 
+    print(f"Processing {total_teachers - start_idx} teachers individually...")
+    process_teachers_individually(df, input_df, output_file, start_idx=start_idx)
     
     # Final save and report
-    print(f"Successfully processed {len(df)} records")
+    print(f"Successfully processed {total_teachers} records")
 
-def process_in_batches(df, input_df, output_file, batch_size=5):
+def process_teachers_individually(df, input_df, output_file, calculate_completion=True, start_idx=0):
     """
-    Process teachers in batches using the batched API calls.
+    Process teachers individually using a comprehensive single API call per teacher.
     
     Args:
         df (pd.DataFrame): DataFrame with base transformations applied
         input_df (pd.DataFrame): Original input DataFrame
         output_file (str): Path where the output CSV file will be saved
-        batch_size (int): Number of teachers to process in each batch
+        calculate_completion (bool): Whether to calculate profile completion after processing
+        start_idx (int): Index to start processing from (for resuming)
     """
-    total_teachers = len(input_df)
+    total_teachers = len(df)
     
-    # Create batches
-    num_batches = (total_teachers + batch_size - 1) // batch_size  # Ceiling division
+    # Adjust total teachers based on start index
+    remaining_teachers = total_teachers - start_idx
+    if remaining_teachers <= 0:
+        print("No teachers remaining to process.")
+        return
     
-    # Process each batch
-    for batch_idx in range(num_batches):
-        start_idx = batch_idx * batch_size
-        end_idx = min(start_idx + batch_size, total_teachers)
-        
-        print(f"\nProcessing batch {batch_idx+1}/{num_batches} (teachers {start_idx+1}-{end_idx} of {total_teachers})")
-        
-        batch_start_time = time.time()
-        
-        # Process each teacher in the batch
-        for idx in range(start_idx, end_idx):
-            # Get both input row and transformed row
-            input_row = input_df.iloc[idx].dropna().to_dict()
-            transformed_row = df.iloc[idx].dropna().to_dict() if idx < len(df) else {}
-            
-            # Combine data from both sources
-            teacher_data = {**input_row, **transformed_row}
-            
-            # Get location data directly from input (not from API)
-            country = input_row.get('country', 'United Arab Emirates')
-            city = input_row.get('city', 'Dubai')
-            
-            # Process teacher with batched API calls
-            print(f"  Processing teacher {idx+1}...")
-            
-            # First API call - profile data
-            profile_data = batch_teacher_profile(teacher_data)
-            time.sleep(0.5)  # Small delay to avoid rate limiting
-            
-            # Second API call - curriculum and school data
-            school_data = batch_curriculum_and_school(teacher_data)
-            
-            # Update the dataframe with all results, ensuring proper data types
-            for field, value in profile_data.items():
-                # Convert boolean to string for CSV compatibility
-                if field == 'is_currently_teacher' and isinstance(value, bool):
-                    value = str(value).lower()
-                df.at[idx, field] = value
-                
-            for field, value in school_data.items():
-                df.at[idx, field] = value
-                
-            # Add location data from input
-            df.at[idx, 'current_location_country'] = country
-            df.at[idx, 'current_location_city'] = city
-            
-            # Small delay between teachers
-            time.sleep(0.2)
-        
-        batch_end_time = time.time()
-        print(f"Batch processed in {batch_end_time - batch_start_time:.2f} seconds")
-        
-        # Save after each batch
-        print(f"Saving batch results to: {output_file}")
-        df.to_csv(output_file, index=False)
-        
-        # Add a delay between batches if not the last batch
-        if batch_idx < num_batches - 1:
-            print("Waiting between batches...")
-            time.sleep(2)
+    print(f"Starting individual teacher processing from index {start_idx} (total: {remaining_teachers} teachers)")
     
-    return df
+    # Initialize progress tracking
+    processed_count = 0
+    
+    # Process teachers one by one starting from start_idx
+    for teacher_idx in range(start_idx, total_teachers):
+        teacher_start_time = time.time()
+        teacher_df_slice = df.iloc[[teacher_idx]].copy() 
+        teacher_name = teacher_df_slice.at[teacher_df_slice.index[0], 'name'] if 'name' in teacher_df_slice.columns else f"Teacher #{teacher_idx+1}"
+        
+        print(f"\nProcessing teacher {teacher_idx + 1} of {total_teachers}: {teacher_name}")
+        
+        try:
+            # Convert row to dict and ensure all values are strings
+            teacher_dict = {k: str(v) if v is not None else '' for k, v in teacher_df_slice.iloc[0].to_dict().items()}
+            
+            # Make a single comprehensive API call for this teacher
+            print(f"  Calling enrich_teacher_profile for {teacher_name}...")
+            enriched_data = enrich_teacher_profile(teacher_dict)
+            print(f"  Received comprehensive profile data")
+            
+            # Update the teacher row (teacher_df_slice) with the enriched data
+            for key, value in enriched_data.items():
+                if pd.notna(value) and str(value).strip():
+                    teacher_df_slice.at[teacher_df_slice.index[0], key] = value
+            
+            # Calculate profile completion for this teacher if requested
+            if calculate_completion:
+                teacher_df_slice = t50.transform(teacher_df_slice, input_df) 
+            
+            # Debug: Print what we're about to save for this row
+            print(f"\nData for {teacher_name} after enrichment and completion:")
+            for col in ['subject', 'bio', 'nationality', 'preferred_grade_level', 
+                       'is_currently_teacher', 'curriculum_experience', 
+                       'teaching_experience_years', 'current_school', 'school_website', 
+                       'current_location_country', 'current_location_city', 'profile_completion_percentage']:
+                if col in teacher_df_slice.columns:
+                    print(f"  {col}: {teacher_df_slice.at[teacher_df_slice.index[0], col]}")
+            
+            # Save this teacher's data
+            write_header = not os.path.exists(output_file) or (os.path.exists(output_file) and os.path.getsize(output_file) == 0) or (teacher_idx == start_idx)
+            
+            teacher_df_slice.to_csv(output_file, mode='a' if not write_header else 'w', header=write_header, index=False)
+            
+            # Report progress for this teacher
+            processed_count += 1
+            teacher_end_time = time.time()
+            print(f"Teacher processed and saved in {teacher_end_time - teacher_start_time:.2f} seconds")
+            print(f"Saved teacher data to: {output_file}")
+
+        except Exception as e:
+            print(f"Error processing teacher {teacher_name}: {e}")
+            try:
+                error_df = pd.DataFrame([{'teacher_id': teacher_df_slice.at[teacher_df_slice.index[0], 'teacher_id'] if 'teacher_id' in teacher_df_slice.columns else 'UNKNOWN',
+                                          'name': teacher_name, 
+                                          'error': str(e)}])
+                error_log_file = os.path.join(os.path.dirname(output_file), "error_log.csv")
+                log_header = not os.path.exists(error_log_file) or (os.path.exists(error_log_file) and os.path.getsize(error_log_file) == 0)
+                error_df.to_csv(error_log_file, mode='a' if not log_header else 'w', header=log_header, index=False)
+                print(f"Logged error for {teacher_name} to {error_log_file}")
+            except Exception as log_err:
+                print(f"Could not log error for {teacher_name}: {log_err}")
+
+        if teacher_idx < total_teachers - 1:  
+            print(f"Waiting 1 second before next teacher...")
+            time.sleep(1)
+
+    print(f"\nFinished processing {processed_count} teachers.")
 
 def apply_final_transformations(df, input_df, output_file):
     """
-    Apply any final transformations or validations to the dataframe.
+    Apply final transformations to the DataFrame and save to CSV.
     
     Args:
-        df (pd.DataFrame): The processed dataframe
-        input_df (pd.DataFrame): The original input dataframe
+        df (pd.DataFrame): The DataFrame to transform
+        input_df (pd.DataFrame): Original input DataFrame
         output_file (str): Path where the output CSV file will be saved
     """
+    print("\nApplying final transformations...")
+    
     # Ensure all required columns exist
     required_columns = [
         'teacher_id', 'name', 'subject', 'headline', 'bio', 'curriculum_experience',
         'teaching_experience_years', 'current_location_country', 'current_location_city', 
         'nationality', 'preferred_grade_level', 'current_school', 'school_website', 
-        'linkedin_url', 'email', 'source_id', 'created_at'
+        'linkedin_url', 'email', 'source_id', 'created_at', 'is_currently_teacher',
+        'profile_completion_percentage'
     ]
     
     for col in required_columns:
         if col not in df.columns:
             print(f"Adding missing column: {col}")
             df[col] = ''
+    
+    # Apply the profile completion calculation if not already done
+    if 'profile_completion_percentage' not in df.columns or df['profile_completion_percentage'].isna().all():
+        print("Calculating profile completion for final output...")
+        df = t50.transform(df, input_df)
+    
+    # Ensure the completion percentage is an integer between 0 and 50
+    if 'profile_completion_percentage' in df.columns:
+        df['profile_completion_percentage'] = df['profile_completion_percentage'].fillna(0).astype(int)
     
     # Handle migration from current_location to country/city split
     if 'current_location' in df.columns and (
@@ -201,21 +235,27 @@ def apply_final_transformations(df, input_df, output_file):
                 continue
                 
             # Handle common patterns like "Dubai, United Arab Emirates"
-            parts = location.split(',')
+            parts = [p.strip() for p in location.split(',') if p.strip()]
             if len(parts) >= 2:
-                df.at[idx, 'current_location_city'] = parts[0].strip()
-                df.at[idx, 'current_location_country'] = parts[1].strip()
+                df.at[idx, 'current_location_city'] = parts[0]
+                df.at[idx, 'current_location_country'] = parts[-1]
             else:
                 # If only one part, determine if it's a city or country
-                if location in ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain']:
-                    df.at[idx, 'current_location_city'] = location
+                if any(country.lower() in location.lower() for country in ['UAE', 'United Arab Emirates']):
                     df.at[idx, 'current_location_country'] = 'United Arab Emirates'
+                    df.at[idx, 'current_location_city'] = 'Dubai'  # Default city
                 else:
-                    df.at[idx, 'current_location_country'] = location
-                    df.at[idx, 'current_location_city'] = ''
-        
-        # Remove the old column to avoid confusion
+                    df.at[idx, 'current_location_city'] = location.strip()
+                    df.at[idx, 'current_location_country'] = 'United Arab Emirates'  # Default country
         df = df.drop('current_location', axis=1)
+    
+    # Apply profile completion calculation
+    print("Calculating profile completion percentages...")
+    df = t50.transform(df, input_df)
+    
+    # Ensure is_currently_teacher is properly set
+    if 'is_currently_teacher' in df.columns:
+        df['is_currently_teacher'] = df['is_currently_teacher'].fillna(False).astype(bool)
     
     # Save the final result
     print(f"Saving final output to: {output_file}")
@@ -263,10 +303,14 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
+    # Create output directory based on current date
+    output_dir = os.path.join("outputs", datetime.datetime.now().strftime("%m-%d"))
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Set default output filename if not provided
     if not args.output:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output = f"output_{timestamp}.csv"
+        args.output = os.path.join(output_dir, f"processed_teachers_{timestamp}.csv")
     
     # First list available models
     list_available_models()
@@ -303,6 +347,7 @@ if __name__ == "__main__":
         end_time = time.time()
         print(f"\nProcessing completed in {end_time - start_time:.2f} seconds")
         print(f"Output saved to: {os.path.abspath(args.output)}")
+        print(f"Output directory: {os.path.abspath(output_dir)}")
     except Exception as e:
         print(f"\nError during processing: {e}")
         exit(1)
